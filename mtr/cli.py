@@ -12,7 +12,7 @@ defaults:
   # 默认同步引擎
   # 选项: "rsync" (推荐), "sftp"
   sync: "rsync"
-  
+
   exclude:
     - ".git/"
     - "__pycache__/"
@@ -25,13 +25,13 @@ servers:
     user: "your_username"
     key_filename: "~/.ssh/id_rsa"
     remote_dir: "/home/your_username/projects/current_project"
-    
+
     # 预设命令 (可选)
     # pre_cmd: "source ~/.bashrc && conda activate myenv"
-    
+
     # 密码认证 (可选)
     # password: "secret"
-    
+
     # 强制同步引擎 (可选)
     # sync: "sftp"
 """
@@ -120,7 +120,9 @@ def cli(server, sync, dry_run, tty, init, command):
         sys.exit(1)
 
     if console:
-        console.print(f"[bold green]Target:[/bold green] {user}@{host} [{config.target_server}]")
+        console.print(
+            f"🎯 [bold green]Target:[/bold green] {user}@{host}\t 🔖 [bold green]Tag[/bold green]: {config.target_server} "
+        )
     else:
         click.secho(f"Target: {user}@{host} [{config.target_server}]", fg="green")
 
