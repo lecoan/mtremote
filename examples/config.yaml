@@ -1,0 +1,53 @@
+# MTRemote (mtr) Configuration Example
+
+# 全局默认设置
+defaults:
+  # 默认同步引擎: "rsync" (推荐) 或 "sftp" (备用)
+  sync: "rsync"
+  
+  # 全局排除的文件列表 (支持 glob pattern)
+  exclude:
+    - ".git/"
+    - ".vscode/"
+    - ".idea/"
+    - "__pycache__/"
+    - "*.pyc"
+    - "*.swp"
+    - "checkpoints/"
+    - "data/"
+    - "logs/"
+
+# 服务器列表
+# 如果命令行未指定 -s，且此处无 explicit default，则默认使用列表中的第一个服务器。
+servers:
+  # === 服务器 1: 开发用 GPU 节点 (默认) ===
+  dev-gpu:
+    host: "192.168.1.100"
+    user: "developer"
+    
+    # 认证方式 1: SSH Key (推荐)
+    # 支持 ~ 展开
+    key_filename: "~/.ssh/id_rsa"
+    
+    # 远程工作目录 (代码将被同步到这里)
+    remote_dir: "/home/developer/workspace/my-project"
+    
+    # 特定于此服务器的排除规则 (会与全局 exclude 合并)
+    exclude:
+      - "local_configs/"
+
+  # === 服务器 2: 生产训练集群 ===
+  prod-train:
+    host: "10.0.0.88"
+    user: "admin"
+    
+    # 认证方式 2: 密码 (不推荐，建议仅用于测试)
+    password: "my_secret_password"
+    
+    remote_dir: "/data/training/experiment_01"
+    
+    # 强制使用 SFTP (例如该机器没有安装 rsync)
+    sync: "sftp"
+
+# (可选) 显式指定默认服务器别名
+# default: "dev-gpu"
