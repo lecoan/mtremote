@@ -49,11 +49,12 @@ def _init_config():
 @click.option("-s", "--server", help="Target server alias")
 @click.option("--sync/--no-sync", default=True, help="Enable/Disable code sync")
 @click.option("--dry-run", is_flag=True, help="Print commands without executing")
+@click.option("--tty/--no-tty", default=True, help="Force enable/disable TTY")
 @click.option(
     "--init", is_flag=True, help="Initialize a configuration file in current directory"
 )
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-def cli(server, sync, dry_run, init, command):
+def cli(server, sync, dry_run, tty, init, command):
     """MTRemote: Sync and Execute code on remote server."""
 
     if init:
@@ -67,12 +68,29 @@ def cli(server, sync, dry_run, init, command):
     # Join command parts back into a string
     remote_cmd = " ".join(command)
 
+    # Check for interactive mode (TTY)
+    # Interactive if: TTY is enabled by flag AND stdout is a real terminal
+    is_interactive = tty and sys.stdout.isatty()
+
+    # Import rich if interactive
+    console = None
+    if is_interactive:
+        try:
+            from rich.console import Console
+
+            console = Console()
+        except ImportError:
+            is_interactive = False  # Fallback if rich is missing (should not happen with dependencies)
+
     # 1. Load Configuration
     try:
         loader = ConfigLoader()
         config = loader.load(server_name=server)
     except ConfigError as e:
-        click.secho(f"Configuration Error: {e}", fg="red", err=True)
+        if console:
+            console.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        else:
+            click.secho(f"Configuration Error: {e}", fg="red", err=True)
         sys.exit(1)
 
     server_conf = config.server_config
@@ -91,16 +109,18 @@ def cli(server, sync, dry_run, init, command):
         )
         sys.exit(1)
 
-    click.secho(f"Target: {user}@{host} [{config.target_server}]", fg="green")
+    if console:
+        console.print(
+            f"[bold green]Target:[/bold green] {user}@{host} [{config.target_server}]"
+        )
+    else:
+        click.secho(f"Target: {user}@{host} [{config.target_server}]", fg="green")
 
     # 2. Sync Code
     if sync:
-        click.secho("Syncing code...", fg="blue")
         local_dir = os.getcwd()
         # Ensure remote_dir is set
         if not remote_dir:
-            # Fallback? Maybe ~/.mtr_workspace/{project_name}?
-            # For now enforce it.
             click.secho("Error: 'remote_dir' is required for sync.", fg="red", err=True)
             sys.exit(1)
 
@@ -144,13 +164,21 @@ def cli(server, sync, dry_run, init, command):
                 if dry_run:
                     click.echo(f"[DryRun] Would sync {local_dir} -> {remote_dir}")
                 else:
-                    syncer.sync()
+                    if is_interactive and console:
+                        with console.status(
+                            "[bold blue]Syncing code...", spinner="dots"
+                        ):
+                            syncer.sync()
+                    else:
+                        click.secho("Syncing code...", fg="blue")
+                        syncer.sync()
             except SyncError as e:
                 click.secho(f"Sync Failed: {e}", fg="red", err=True)
                 sys.exit(1)
 
     # 3. Execute Command
-    click.secho(f"Executing: {remote_cmd}", fg="blue")
+    if not is_interactive:
+        click.secho(f"Executing: {remote_cmd}", fg="blue")
 
     if dry_run:
         click.echo(f"[DryRun] Would run on {host}: {remote_cmd} (workdir={remote_dir})")
@@ -160,22 +188,30 @@ def cli(server, sync, dry_run, init, command):
     try:
         ssh.connect()
 
-        # Stream output
-        stream = ssh.exec_command_stream(
-            remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd
-        )
+        if is_interactive:
+            # Run interactive shell (full TTY support)
+            exit_code = ssh.run_interactive_shell(
+                remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd
+            )
+            sys.exit(exit_code)
+        else:
+            # Run stream mode (for scripts/pipes)
+            # pty=False ensures clean output for parsing (separates stdout/stderr if we implemented that,
+            # but currently streams merged or just stdout. Let's keep pty=False to avoid control chars)
+            stream = ssh.exec_command_stream(
+                remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd, pty=False
+            )
 
-        # Consume generator and print
-        # Also catch return value
-        exit_code = 0
-        try:
-            while True:
-                line = next(stream)
-                click.echo(line, nl=False)  # nl=False because line usually has \n
-        except StopIteration as e:
-            exit_code = e.value
+            # Consume generator and print
+            exit_code = 0
+            try:
+                while True:
+                    line = next(stream)
+                    click.echo(line, nl=False)
+            except StopIteration as e:
+                exit_code = e.value
 
-        sys.exit(exit_code)
+            sys.exit(exit_code)
 
     except SSHError as e:
         click.secho(f"SSH Error: {e}", fg="red", err=True)

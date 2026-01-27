@@ -195,7 +195,7 @@ class RsyncSyncer(BaseSyncer):
         src = self.local_dir if self.local_dir.endswith("/") else f"{self.local_dir}/"
         dest = f"{self.user}@{self.host}:{self.remote_dir}"
 
-        cmd = ["rsync", "-avz"]
+        cmd = ["rsync", "-azq"]
 
         # Add excludes
         for item in self.exclude:
