@@ -1,25 +1,39 @@
-import click
 import os
 import sys
-from mtr.config import ConfigLoader, ConfigError
+
+import click
+
+from mtr.config import ConfigError, ConfigLoader
 from mtr.ssh import SSHClientWrapper, SSHError
 from mtr.sync import RsyncSyncer, SftpSyncer, SyncError
 
 DEFAULT_CONFIG_TEMPLATE = """# MTRemote Configuration
 defaults:
+  # 默认同步引擎
+  # 选项: "rsync" (推荐), "sftp"
   sync: "rsync"
+  
   exclude:
     - ".git/"
     - "__pycache__/"
     - "*.pyc"
 
 servers:
-  # Example Server
+  # === 服务器示例 ===
   dev-node:
     host: "192.168.1.100"
     user: "your_username"
     key_filename: "~/.ssh/id_rsa"
     remote_dir: "/home/your_username/projects/current_project"
+    
+    # 预设命令 (可选)
+    # pre_cmd: "source ~/.bashrc && conda activate myenv"
+    
+    # 密码认证 (可选)
+    # password: "secret"
+    
+    # 强制同步引擎 (可选)
+    # sync: "sftp"
 """
 
 
@@ -43,16 +57,12 @@ def _init_config():
     click.echo("Please edit it to match your environment.")
 
 
-@click.command(
-    context_settings=dict(ignore_unknown_options=True, allow_extra_args=True)
-)
+@click.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
 @click.option("-s", "--server", help="Target server alias")
 @click.option("--sync/--no-sync", default=True, help="Enable/Disable code sync")
 @click.option("--dry-run", is_flag=True, help="Print commands without executing")
 @click.option("--tty/--no-tty", default=True, help="Force enable/disable TTY")
-@click.option(
-    "--init", is_flag=True, help="Initialize a configuration file in current directory"
-)
+@click.option("--init", is_flag=True, help="Initialize a configuration file in current directory")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 def cli(server, sync, dry_run, tty, init, command):
     """MTRemote: Sync and Execute code on remote server."""
@@ -110,9 +120,7 @@ def cli(server, sync, dry_run, tty, init, command):
         sys.exit(1)
 
     if console:
-        console.print(
-            f"[bold green]Target:[/bold green] {user}@{host} [{config.target_server}]"
-        )
+        console.print(f"[bold green]Target:[/bold green] {user}@{host} [{config.target_server}]")
     else:
         click.secho(f"Target: {user}@{host} [{config.target_server}]", fg="green")
 
@@ -125,9 +133,7 @@ def cli(server, sync, dry_run, tty, init, command):
             sys.exit(1)
 
         # Resolve exclude
-        exclude = config.global_defaults.get("exclude", []) + server_conf.get(
-            "exclude", []
-        )
+        exclude = config.global_defaults.get("exclude", []) + server_conf.get("exclude", [])
 
         # Determine engine
         engine = server_conf.get("sync", config.global_defaults.get("sync", "rsync"))
@@ -165,9 +171,7 @@ def cli(server, sync, dry_run, tty, init, command):
                     click.echo(f"[DryRun] Would sync {local_dir} -> {remote_dir}")
                 else:
                     if is_interactive and console:
-                        with console.status(
-                            "[bold blue]Syncing code...", spinner="dots"
-                        ):
+                        with console.status("[bold blue]Syncing code...", spinner="dots"):
                             syncer.sync()
                     else:
                         click.secho("Syncing code...", fg="blue")
@@ -190,17 +194,13 @@ def cli(server, sync, dry_run, tty, init, command):
 
         if is_interactive:
             # Run interactive shell (full TTY support)
-            exit_code = ssh.run_interactive_shell(
-                remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd
-            )
+            exit_code = ssh.run_interactive_shell(remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd)
             sys.exit(exit_code)
         else:
             # Run stream mode (for scripts/pipes)
             # pty=False ensures clean output for parsing (separates stdout/stderr if we implemented that,
             # but currently streams merged or just stdout. Let's keep pty=False to avoid control chars)
-            stream = ssh.exec_command_stream(
-                remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd, pty=False
-            )
+            stream = ssh.exec_command_stream(remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd, pty=False)
 
             # Consume generator and print
             exit_code = 0

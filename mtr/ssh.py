@@ -1,17 +1,16 @@
-import paramiko
 import os
-import sys
 import select
 import socket
-from typing import Optional, Generator, Tuple
+import sys
+from typing import Generator, Optional
+
+import paramiko
 
 # Try to import termios/tty for interactive shell
 try:
+    import signal
     import termios
     import tty
-    import signal
-    import fcntl
-    import struct
 
     HAS_TTY = True
 except ImportError:
@@ -62,9 +61,7 @@ class SSHClientWrapper:
         except paramiko.SSHException as e:
             raise SSHError(f"Failed to connect to {self.host}: {e}")
 
-    def _build_command(
-        self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None
-    ) -> str:
+    def _build_command(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None) -> str:
         parts = []
         if workdir:
             parts.append(f"cd {workdir}")
@@ -99,7 +96,8 @@ class SSHClientWrapper:
 
             # Stream output
             # If pty=False, stdout and stderr are separate.
-            # For simplicity in this generator, we only yield stdout if pty=False to avoid interleaving complexity in batch mode,
+            # For simplicity in this generator, we only yield stdout if pty=False to avoid
+            # interleaving complexity in batch mode,
             # OR we can iterate both. Paramiko buffers them.
             # Let's keep yielding stdout. If pty=True, stderr is in stdout.
             # If pty=False, we might miss stderr here.
@@ -116,9 +114,7 @@ class SSHClientWrapper:
         except paramiko.SSHException as e:
             raise SSHError(f"Command execution failed: {e}")
 
-    def run_interactive_shell(
-        self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None
-    ) -> int:
+    def run_interactive_shell(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None) -> int:
         """
         Runs an interactive shell with PTY support.
         Handles full TTY raw mode, window resizing, and socket forwarding.
@@ -128,9 +124,7 @@ class SSHClientWrapper:
             raise SSHError("Client not connected")
 
         if not HAS_TTY:
-            raise SSHError(
-                "Interactive mode not supported on this platform (missing termios)."
-            )
+            raise SSHError("Interactive mode not supported on this platform (missing termios).")
 
         full_command = self._build_command(command, workdir, pre_cmd)
 
@@ -155,7 +149,7 @@ class SSHClientWrapper:
             try:
                 c, r = os.get_terminal_size()
                 channel.resize_pty(width=c, height=r)
-            except:
+            except Exception:
                 pass
 
         old_handler = signal.signal(signal.SIGWINCH, _resize_handler)

@@ -1,10 +1,11 @@
-import subprocess
-import os
-import stat
 import fnmatch
-import paramiko
+import os
+import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from typing import List, Optional
+
+import paramiko
 
 
 class SyncError(Exception):
@@ -148,9 +149,7 @@ class SftpSyncer(BaseSyncer):
                     remote_stat = self.sftp.stat(remote_file)
                     local_stat = os.stat(local_file)
 
-                    if remote_stat.st_size == local_stat.st_size and int(
-                        remote_stat.st_mtime
-                    ) >= int(local_stat.st_mtime):
+                    if remote_stat.st_size == local_stat.st_size and int(remote_stat.st_mtime) >= int(local_stat.st_mtime):
                         should_upload = False
                 except FileNotFoundError:
                     pass  # Does not exist, must upload
@@ -166,9 +165,6 @@ class SftpSyncer(BaseSyncer):
             self.sftp.close()
         if self.transport:
             self.transport.close()
-
-
-import shutil
 
 
 class RsyncSyncer(BaseSyncer):
@@ -222,9 +218,7 @@ class RsyncSyncer(BaseSyncer):
     def sync(self):
         if self.password and not self.key_filename:
             if not shutil.which("sshpass"):
-                raise SyncError(
-                    "Rsync with password requires 'sshpass'. Please install it or use SSH Key."
-                )
+                raise SyncError("Rsync with password requires 'sshpass'. Please install it or use SSH Key.")
 
         cmd = self._build_rsync_command()
         try:

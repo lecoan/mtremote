@@ -1,22 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "mtremote"
 version = "0.1.0"
-description = "Add your description here"
+description = "A CLI tool for seamless local development and remote execution on GPU servers."
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
-    "click>=8.3.1",
-    "paramiko>=4.0.0",
-    "pyyaml>=6.0.3",
-    "rich>=14.3.1",
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Yang Xiang", email = "author@example.com" }
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "click>=8.0.0",
+    "paramiko>=2.11.0",
+    "pyyaml>=6.0",
+    "rich>=12.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/mtremote"
+Repository = "https://github.com/yourusername/mtremote"
+Issues = "https://github.com/yourusername/mtremote/issues"
 
 [project.scripts]
 mtr = "mtr.cli:cli"
 
+[tool.hatch.build.targets.wheel]
+packages = ["mtr"]
+
+[tool.ruff]
+line-length = 128
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
+
 [dependency-groups]
 dev = [
+    "pre-commit>=4.5.1",
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-mock>=3.15.1",
+    "ruff>=0.14.14",
 ]

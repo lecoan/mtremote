@@ -1,11 +1,15 @@
 # MTRemote (mtr) Configuration Example
 
-# 全局默认设置
+# 全局默认设置 (Global Defaults)
 defaults:
-  # 默认同步引擎: "rsync" (推荐) 或 "sftp" (备用)
+  # 默认同步引擎
+  # 选项:
+  #   - "rsync": (推荐) 调用系统 rsync，支持增量同步，速度快。需本地有 rsync。
+  #   - "sftp":  (备用) 纯 Python 实现，无额外依赖，原生支持密码认证。
   sync: "rsync"
-  
+
   # 全局排除的文件列表 (支持 glob pattern)
+  # 这些文件在同步时会被忽略
   exclude:
     - ".git/"
     - ".vscode/"
@@ -17,37 +21,48 @@ defaults:
     - "data/"
     - "logs/"
 
-# 服务器列表
-# 如果命令行未指定 -s，且此处无 explicit default，则默认使用列表中的第一个服务器。
+# (可选) 显式指定默认服务器别名
+# 如果未设置，且命令行未指定 -s，则默认使用 servers 列表中的第一个。
+# default: "dev-gpu"
+
+# 服务器列表 (Server List)
 servers:
   # === 服务器 1: 开发用 GPU 节点 (默认) ===
   dev-gpu:
+    # 必填字段
     host: "192.168.1.100"
     user: "developer"
-    
-    # 认证方式 1: SSH Key (推荐)
-    # 支持 ~ 展开
-    key_filename: "~/.ssh/id_rsa"
-    
+
     # 远程工作目录 (代码将被同步到这里)
+    # 必填，除非你只用它来执行一些无关目录的命令
     remote_dir: "/home/developer/workspace/my-project"
-    
+
+    # --- 认证方式 (二选一) ---
+    # 1. SSH Key (推荐): 本地私钥路径，支持 ~ 展开
+    key_filename: "~/.ssh/id_rsa"
+    # 2. 密码 (不推荐): 明文密码，建议仅用于测试
+    # password: "my_secret_password"
+
+    # --- 可选高级配置 ---
+
+    # 预设命令 (Pre-command)
+    # 在执行主命令前自动运行，常用于环境激活
+    # pre_cmd: "source ~/.bashrc && conda activate pytorch_env"
+
+    # 端口 (默认 22)
+    # port: 2222
+
     # 特定于此服务器的排除规则 (会与全局 exclude 合并)
     exclude:
       - "local_configs/"
+
+    # 覆盖同步引擎 (例如此节点强制用 sftp)
+    # sync: "sftp"
 
   # === 服务器 2: 生产训练集群 ===
   prod-train:
     host: "10.0.0.88"
     user: "admin"
-    
-    # 认证方式 2: 密码 (不推荐，建议仅用于测试)
-    password: "my_secret_password"
-    
-    remote_dir: "/data/training/experiment_01"
-    
-    # 强制使用 SFTP (例如该机器没有安装 rsync)
+    password: "password123"
     sync: "sftp"
-
-# (可选) 显式指定默认服务器别名
-# default: "dev-gpu"
+    remote_dir: "/data/training/experiment_01"

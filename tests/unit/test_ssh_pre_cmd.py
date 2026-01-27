@@ -1,5 +1,7 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
 from mtr.ssh import SSHClientWrapper
 
 
@@ -19,11 +21,7 @@ def test_exec_stream_with_pre_cmd(mock_paramiko):
     client.client.exec_command.return_value = (MagicMock(), mock_stdout, MagicMock())
 
     # Execute
-    list(
-        client.exec_command_stream(
-            "python train.py", workdir="/remote", pre_cmd="source activate env"
-        )
-    )
+    list(client.exec_command_stream("python train.py", workdir="/remote", pre_cmd="source activate env"))
 
     # Verify command string
     expected_cmd = "cd /remote && source activate env && python train.py"

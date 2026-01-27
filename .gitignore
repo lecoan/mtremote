@@ -9,4 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
+# Deps
+node_modules/
+
 .mtr

@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import MagicMock
-from mtr.ssh import SSHClientWrapper, SSHError
+
+import pytest
+
+from mtr.ssh import SSHClientWrapper
 
 
 @pytest.fixture
@@ -27,9 +29,7 @@ def test_connect_password(mock_paramiko):
     client.connect()
 
     mock_instance = mock_paramiko.return_value
-    mock_instance.connect.assert_called_with(
-        hostname="1.1.1.1", username="user", port=22, password="password", timeout=10
-    )
+    mock_instance.connect.assert_called_with(hostname="1.1.1.1", username="user", port=22, password="password", timeout=10)
 
 
 def test_exec_stream(mock_paramiko):

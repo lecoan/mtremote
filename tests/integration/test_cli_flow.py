@@ -1,9 +1,10 @@
-import pytest
 import os
+from unittest.mock import MagicMock
+
+import pytest
 from click.testing import CliRunner
-from unittest.mock import MagicMock, patch
+
 from mtr.cli import cli
-from mtr.config import Config
 
 
 @pytest.fixture

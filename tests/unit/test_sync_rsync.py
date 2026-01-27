@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+
 from mtr.sync import RsyncSyncer, SyncError
 
 
@@ -14,7 +14,7 @@ def test_rsync_command_generation():
     )
 
     cmd_list = syncer._build_rsync_command()
-    cmd_str = " ".join(cmd_list)
+    # cmd_str = " ".join(cmd_list)
 
     assert "rsync" in cmd_list[0]
     # Check for archive mode

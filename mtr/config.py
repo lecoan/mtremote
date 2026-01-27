@@ -1,7 +1,8 @@
 import os
-import yaml
-from typing import Dict, Optional, Any, List
 from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+import yaml
 
 
 class ConfigError(Exception):

@@ -1,6 +1,8 @@
+from unittest.mock import MagicMock
+
 import pytest
 from click.testing import CliRunner
-from unittest.mock import MagicMock, patch
+
 from mtr.cli import cli
 
 
@@ -31,9 +33,7 @@ def test_sftp_sync_mode(mock_components):
     mock_config.global_defaults = {"exclude": []}
     config_cls.return_value.load.return_value = mock_config
 
-    ssh_cls.return_value.exec_command_stream.side_effect = lambda *args, **kwargs: (
-        yield "done"
-    )
+    ssh_cls.return_value.exec_command_stream.side_effect = lambda *args, **kwargs: (yield "done")
 
     runner = CliRunner()
     result = runner.invoke(cli, ["ls"])
@@ -63,9 +63,7 @@ def test_cli_pre_cmd_flow(mock_components):
     config_cls.return_value.load.return_value = mock_config
 
     ssh_instance = ssh_cls.return_value
-    ssh_instance.exec_command_stream.side_effect = lambda *args, **kwargs: (
-        yield "done"
-    )
+    ssh_instance.exec_command_stream.side_effect = lambda *args, **kwargs: (yield "done")
 
     runner = CliRunner()
     result = runner.invoke(cli, ["python main.py"])

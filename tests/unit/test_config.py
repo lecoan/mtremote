@@ -1,7 +1,7 @@
-import os
-import yaml
 import pytest
-from mtr.config import ConfigLoader, ConfigError
+import yaml
+
+from mtr.config import ConfigError, ConfigLoader
 
 
 @pytest.fixture
