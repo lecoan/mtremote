@@ -76,6 +76,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
     """MTRemote: Sync and Execute code on remote server."""
 
     # Setup logging if enabled
+    global logger
     if enable_log:
         if not log_file:
             # Generate default log file path: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log
@@ -89,6 +90,9 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
         except ValueError:
             click.secho(f"Warning: Invalid log level '{log_level}', using INFO", fg="yellow")
             setup_logging(log_file, LogLevel.INFO)
+
+        # Re-get logger after setup to use the real logger instead of no-op
+        logger = get_logger()
 
     if init:
         _init_config()
