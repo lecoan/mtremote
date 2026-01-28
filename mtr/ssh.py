@@ -9,9 +9,6 @@ import paramiko
 
 from mtr.logger import get_logger
 
-# Module-level logger instance
-logger = get_logger()
-
 # Try to import termios/tty for interactive shell
 try:
     import signal
@@ -50,6 +47,7 @@ class SSHClientWrapper:
         self.client: Optional[paramiko.SSHClient] = None
 
     def connect(self):
+        logger = get_logger()
         logger.info(f"Connecting to {self.host}:{self.port} as {self.user}", module="mtr.ssh")
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -99,6 +97,7 @@ class SSHClientWrapper:
         Returns the exit code.
         Suitable for batch mode or when interactivity is not required.
         """
+        logger = get_logger()
         logger.info(f"Executing command (stream mode): {command}", module="mtr.ssh")
         logger.debug(f"Workdir: {workdir}, Pre-cmd: {pre_cmd}, PTY: {pty}", module="mtr.ssh")
 
@@ -133,6 +132,7 @@ class SSHClientWrapper:
 
     def _setup_channel(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None):
         """Setup SSH channel with PTY for interactive shell."""
+        logger = get_logger()
         logger.debug("Opening SSH transport session", module="mtr.ssh")
         transport = self.client.get_transport()  # type: ignore
         if not transport:
@@ -162,6 +162,7 @@ class SSHClientWrapper:
 
     def _run_event_loop(self, channel) -> int:
         """Run the main event loop for interactive shell."""
+        logger = get_logger()
         logger.debug("Setting channel to non-blocking mode (timeout=0.0)", module="mtr.ssh")
         channel.settimeout(0.0)
 
@@ -229,6 +230,7 @@ class SSHClientWrapper:
 
     def _cleanup_resources(self, channel, old_tty_attrs, old_handler):
         """Cleanup resources with proper error handling."""
+        logger = get_logger()
         logger.debug("Starting cleanup", module="mtr.ssh")
 
         logger.debug("Restoring terminal settings", module="mtr.ssh")
@@ -261,6 +263,7 @@ class SSHClientWrapper:
         Handles full TTY raw mode, window resizing, and socket forwarding.
         Returns exit code.
         """
+        logger = get_logger()
         logger.info(f"Starting interactive shell for command: {command}", module="mtr.ssh")
         logger.debug(f"Workdir: {workdir}, Pre-cmd: {pre_cmd}", module="mtr.ssh")
 
@@ -281,6 +284,7 @@ class SSHClientWrapper:
         logger.info("PTY allocated successfully", module="mtr.ssh")
 
         def _resize_handler(signum, frame):
+            logger = get_logger()
             logger.debug(f"SIGWINCH received (signal {signum})", module="mtr.ssh")
             try:
                 if channel and channel.active:
@@ -314,6 +318,7 @@ class SSHClientWrapper:
 
     def close(self):
         if self.client:
+            logger = get_logger()
             logger.debug("Closing SSH connection", module="mtr.ssh")
             self.client.close()
             logger.debug("SSH connection closed", module="mtr.ssh")

@@ -9,9 +9,6 @@ from mtr.logger import LogLevel, get_logger, setup_logging
 from mtr.ssh import SSHClientWrapper, SSHError
 from mtr.sync import RsyncSyncer, SftpSyncer, SyncError
 
-# Module-level logger instance
-logger = get_logger()
-
 DEFAULT_CONFIG_TEMPLATE = """# MTRemote Configuration
 defaults:
   # 默认同步引擎
@@ -75,8 +72,10 @@ def _init_config():
 def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, command):
     """MTRemote: Sync and Execute code on remote server."""
 
+    # Get logger instance (will be no-op if not setup)
+    logger = get_logger()
+
     # Setup logging if enabled
-    global logger
     if enable_log:
         if not log_file:
             # Generate default log file path: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log
@@ -95,6 +94,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
         logger = get_logger()
 
     if init:
+        logger = get_logger()
         _init_config()
         logger.info("Initialized configuration file", module="mtr.cli")
         return
