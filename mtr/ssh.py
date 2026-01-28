@@ -1,33 +1,41 @@
 import os
-import select
-import socket
-import sys
-import threading
+import shutil
+import subprocess
 from typing import Generator, Optional
 
 import paramiko
 
 from mtr.logger import get_logger
 
-# Try to import termios/tty for interactive shell
-try:
-    import signal
-    import termios
-    import tty
-
-    HAS_TTY = True
-except ImportError:
-    HAS_TTY = False
-
 
 class SSHError(Exception):
     pass
 
 
-# Constants for interactive shell
-DEFAULT_TERMINAL_COLS = 80
-DEFAULT_TERMINAL_ROWS = 24
+# Constants for batch mode
 BUFFER_SIZE = 32768  # 32KB for better performance
+
+
+def _check_ssh_availability():
+    """Check if ssh command is available."""
+    if shutil.which("ssh") is None:
+        raise SSHError(
+            "SSH command not found. Please install OpenSSH client.\n"
+            "  macOS: brew install openssh\n"
+            "  Ubuntu/Debian: sudo apt-get install openssh-client\n"
+            "  CentOS/RHEL: sudo yum install openssh-clients"
+        )
+
+
+def _check_sshpass_availability():
+    """Check if sshpass command is available."""
+    if shutil.which("sshpass") is None:
+        raise SSHError(
+            "sshpass command not found. Please install sshpass for password authentication.\n"
+            "  macOS: brew install hudochenkov/sshpass/sshpass\n"
+            "  Ubuntu/Debian: sudo apt-get install sshpass\n"
+            "  CentOS/RHEL: sudo yum install sshpass"
+        )
 
 
 class SSHClientWrapper:
@@ -130,191 +138,58 @@ class SSHClientWrapper:
             logger.error(f"Command execution failed: {e}", module="mtr.ssh")
             raise SSHError(f"Command execution failed: {e}")
 
-    def _setup_channel(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None):
-        """Setup SSH channel with PTY for interactive shell."""
-        logger = get_logger()
-        logger.debug("Opening SSH transport session", module="mtr.ssh")
-        transport = self.client.get_transport()  # type: ignore
-        if not transport:
-            raise SSHError("Transport not active")
-
-        channel = transport.open_session()
-
-        try:
-            cols, rows = os.get_terminal_size()
-            logger.debug(f"Terminal size detected: {cols}x{rows}", module="mtr.ssh")
-        except OSError:
-            cols, rows = DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS
-            logger.debug(f"Failed to get terminal size, using default: {cols}x{rows}", module="mtr.ssh")
-
-        term = os.environ.get("TERM", "vt100")
-        logger.debug(f"Terminal type: {term}", module="mtr.ssh")
-
-        logger.debug("Requesting PTY allocation", module="mtr.ssh")
-        channel.get_pty(term=term, width=cols, height=rows)
-
-        full_command = self._build_command(command, workdir, pre_cmd)
-        logger.debug(f"Executing command: {full_command}", module="mtr.ssh")
-        channel.exec_command(full_command)
-
-        logger.debug("Channel setup completed", module="mtr.ssh")
-        return channel
-
-    def _run_event_loop(self, channel) -> int:
-        """Run the main event loop for interactive shell."""
-        logger = get_logger()
-        logger.debug("Setting channel to non-blocking mode (timeout=0.0)", module="mtr.ssh")
-        channel.settimeout(0.0)
-
-        iteration = 0
-        total_bytes_received = 0
-        total_bytes_sent = 0
-
-        while True:
-            iteration += 1
-            logger.debug(f"Event loop iteration {iteration}", module="mtr.ssh")
-
-            r, w, x = select.select([channel, sys.stdin], [], [])
-            logger.debug(f"Select returned: {len(r)} readable, {len(w)} writable, {len(x)} exceptional", module="mtr.ssh")
-
-            if channel in r:
-                logger.debug("Channel is readable", module="mtr.ssh")
-                try:
-                    data = channel.recv(BUFFER_SIZE)
-                    bytes_received = len(data)
-                    total_bytes_received += bytes_received
-
-                    if bytes_received == 0:
-                        logger.debug("Channel received EOF (0 bytes)", module="mtr.ssh")
-                        break
-
-                    logger.debug(
-                        f"Received {bytes_received} bytes from channel (total: {total_bytes_received})", module="mtr.ssh"
-                    )
-                    sys.stdout.buffer.write(data)
-                    sys.stdout.buffer.flush()
-                except socket.error as e:
-                    logger.debug(f"Socket error (EAGAIN/EWOULDBLOCK): {e}", module="mtr.ssh")
-                except Exception as e:
-                    logger.warning(f"Error receiving data from channel: {e}", module="mtr.ssh")
-
-            if sys.stdin in r:
-                logger.debug("Stdin is readable", module="mtr.ssh")
-                try:
-                    data = os.read(sys.stdin.fileno(), BUFFER_SIZE)
-                    bytes_sent = len(data)
-                    total_bytes_sent += bytes_sent
-
-                    if bytes_sent == 0:
-                        logger.debug("Stdin received EOF (0 bytes)", module="mtr.ssh")
-                        break
-
-                    logger.debug(f"Read {bytes_sent} bytes from stdin (total: {total_bytes_sent})", module="mtr.ssh")
-                    channel.send(data)
-                    logger.debug(f"Sent {bytes_sent} bytes to channel", module="mtr.ssh")
-                except Exception as e:
-                    logger.warning(f"Error reading from stdin: {e}", module="mtr.ssh")
-
-        logger.debug(f"Event loop ended after {iteration} iterations", module="mtr.ssh")
-        logger.debug(f"Total bytes received: {total_bytes_received}, sent: {total_bytes_sent}", module="mtr.ssh")
-
-        logger.debug("Waiting for exit status (timeout=5.0)", module="mtr.ssh")
-        try:
-            channel.settimeout(5.0)
-            exit_code = channel.recv_exit_status()
-            logger.debug(f"Received exit status: {exit_code}", module="mtr.ssh")
-            return exit_code
-        except socket.timeout:
-            logger.warning("Timeout waiting for exit status, assuming failure", module="mtr.ssh")
-            return -1
-
-    def _cleanup_resources(self, channel, old_tty_attrs, old_handler):
-        """Cleanup resources with proper error handling."""
-        logger = get_logger()
-        logger.debug("Starting cleanup", module="mtr.ssh")
-
-        logger.debug("Restoring terminal settings", module="mtr.ssh")
-        try:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_tty_attrs)
-            logger.debug("Terminal settings restored successfully", module="mtr.ssh")
-        except Exception as e:
-            logger.warning(f"Failed to restore terminal settings: {e}", module="mtr.ssh")
-
-        logger.debug("Restoring signal handler", module="mtr.ssh")
-        try:
-            signal.signal(signal.SIGWINCH, old_handler)
-            logger.debug("Signal handler restored successfully", module="mtr.ssh")
-        except Exception as e:
-            logger.warning(f"Failed to restore signal handler: {e}", module="mtr.ssh")
-
-        logger.debug("Closing channel", module="mtr.ssh")
-        try:
-            if channel:
-                channel.close()
-                logger.debug("Channel closed successfully", module="mtr.ssh")
-        except Exception as e:
-            logger.debug(f"Error closing channel: {e}", module="mtr.ssh")
-
-        logger.info("Cleanup completed", module="mtr.ssh")
-
     def run_interactive_shell(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None) -> int:
         """
-        Runs an interactive shell with PTY support.
-        Handles full TTY raw mode, window resizing, and socket forwarding.
+        Runs an interactive shell using system ssh -t command.
+        This provides full TTY support with proper signal handling.
         Returns exit code.
         """
         logger = get_logger()
-        logger.info(f"Starting interactive shell for command: {command}", module="mtr.ssh")
+        logger.info(f"Starting interactive shell via ssh -t: {command}", module="mtr.ssh")
         logger.debug(f"Workdir: {workdir}, Pre-cmd: {pre_cmd}", module="mtr.ssh")
 
-        if not self.client:
-            raise SSHError("Client not connected")
+        # Check SSH availability
+        _check_ssh_availability()
 
-        if not HAS_TTY:
-            raise SSHError("Interactive mode not supported on this platform (missing termios).")
+        # Check sshpass availability if password is used
+        if self.password:
+            _check_sshpass_availability()
 
-        logger.debug(f"HAS_TTY: {HAS_TTY}", module="mtr.ssh")
-        logger.debug(f"Current thread is main: {threading.current_thread() is threading.main_thread()}", module="mtr.ssh")
+        full_command = self._build_command(command, workdir, pre_cmd)
 
-        if threading.current_thread() is not threading.main_thread():
-            raise SSHError("Interactive shell must run in main thread")
+        # Build ssh command
+        ssh_cmd = ["ssh", "-t"]
 
-        logger.debug("Setting up SSH channel with PTY", module="mtr.ssh")
-        channel = self._setup_channel(command, workdir, pre_cmd)
-        logger.info("PTY allocated successfully", module="mtr.ssh")
+        # Port
+        if self.port != 22:
+            ssh_cmd.extend(["-p", str(self.port)])
 
-        def _resize_handler(signum, frame):
-            logger = get_logger()
-            logger.debug(f"SIGWINCH received (signal {signum})", module="mtr.ssh")
-            try:
-                if channel and channel.active:
-                    c, r = os.get_terminal_size()
-                    logger.debug(f"Resizing PTY to {c}x{r}", module="mtr.ssh")
-                    channel.resize_pty(width=c, height=r)
-                    logger.debug("PTY resize completed", module="mtr.ssh")
-                else:
-                    logger.debug("Channel not active, skipping resize", module="mtr.ssh")
-            except OSError as e:
-                logger.debug(f"Failed to resize terminal: {e}", module="mtr.ssh")
-            except Exception as e:
-                logger.debug(f"Unexpected error in resize handler: {e}", module="mtr.ssh")
+        # Key authentication
+        if self.key_filename:
+            ssh_cmd.extend(["-i", os.path.expanduser(self.key_filename)])
 
-        logger.debug("Saving terminal attributes", module="mtr.ssh")
-        old_tty_attrs = termios.tcgetattr(sys.stdin)
+        # Target host and command
+        target = f"{self.user}@{self.host}"
+        ssh_cmd.extend([target, full_command])
 
-        logger.debug("Registering SIGWINCH handler", module="mtr.ssh")
-        old_handler = signal.signal(signal.SIGWINCH, _resize_handler)
+        # Wrap with sshpass if password is provided
+        if self.password:
+            ssh_cmd = ["sshpass", "-p", self.password] + ssh_cmd
 
-        logger.debug("Entering raw mode", module="mtr.ssh")
-        tty.setraw(sys.stdin.fileno())
+        logger.debug(f"Executing: {' '.join(ssh_cmd)}", module="mtr.ssh")
 
+        # Run command with direct stdin/stdout/stderr forwarding
         try:
-            logger.debug("Starting event loop", module="mtr.ssh")
-            exit_code = self._run_event_loop(channel)
-            logger.info(f"Interactive shell exited with code: {exit_code}", module="mtr.ssh")
-            return exit_code
-        finally:
-            self._cleanup_resources(channel, old_tty_attrs, old_handler)
+            result = subprocess.run(ssh_cmd)
+            logger.info(f"Interactive shell exited with code: {result.returncode}", module="mtr.ssh")
+            return result.returncode
+        except FileNotFoundError as e:
+            # This shouldn't happen if _check_ssh_availability passed, but just in case
+            logger.error(f"Command not found: {e}", module="mtr.ssh")
+            raise SSHError(f"SSH command execution failed: {e}")
+        except Exception as e:
+            logger.error(f"Interactive shell failed: {e}", module="mtr.ssh")
+            raise SSHError(f"Interactive shell failed: {e}")
 
     def close(self):
         if self.client:

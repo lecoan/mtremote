@@ -25,7 +25,17 @@ uv tool install mtremote
 pip install mtremote
 ```
 
-*注意：使用 rsync 模式推荐在本地安装 `rsync` (macOS/Linux 自带)。如果使用密码认证且坚持用 rsync，需安装 `sshpass`。*
+### 系统依赖
+
+MTRemote 需要以下系统命令：
+
+| 命令 | 用途 | 安装方式 |
+|------|------|----------|
+| `ssh` | 交互式 Shell (TTY) | macOS/Linux 自带，或 `brew install openssh` |
+| `rsync` | 快速文件同步 (推荐) | macOS/Linux 自带 |
+| `sshpass` | 密码认证 (可选) | `brew install hudochenkov/sshpass/sshpass` (macOS) / `apt install sshpass` (Ubuntu) |
+
+**注意**：交互式 Shell 功能（如 `mtr bash`, `mtr ipython`）**必须**安装 `ssh`。密码认证**必须**安装 `sshpass`。
 
 ## 🛠️ 快速开始
 
@@ -130,8 +140,21 @@ servers:
 
 ### 3. 密码认证
 支持 SSH 密码认证，但推荐使用 SSH Key。
+*   **交互式 Shell**: 使用 `sshpass` 包装 `ssh -t` 命令。
 *   **SFTP**: 原生支持密码。
 *   **Rsync**: 需要本地安装 `sshpass` 工具才能使用密码认证。
+
+**密码认证依赖**: 使用密码认证时，必须安装 `sshpass`:
+```bash
+# macOS
+brew install hudochenkov/sshpass/sshpass
+
+# Ubuntu/Debian
+sudo apt-get install sshpass
+
+# CentOS/RHEL
+sudo yum install sshpass
+```
 
 ### 4. 调试日志 (--enable-log)
 当遇到问题需要排查时，可以启用文件日志：
