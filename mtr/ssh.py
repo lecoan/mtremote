@@ -2,9 +2,12 @@ import os
 import select
 import socket
 import sys
+import threading
 from typing import Generator, Optional
 
 import paramiko
+
+from mtr.logger import get_logger
 
 # Try to import termios/tty for interactive shell
 try:
@@ -19,6 +22,12 @@ except ImportError:
 
 class SSHError(Exception):
     pass
+
+
+# Constants for interactive shell
+DEFAULT_TERMINAL_COLS = 80
+DEFAULT_TERMINAL_ROWS = 24
+BUFFER_SIZE = 32768  # 32KB for better performance
 
 
 class SSHClientWrapper:
@@ -114,22 +123,10 @@ class SSHClientWrapper:
         except paramiko.SSHException as e:
             raise SSHError(f"Command execution failed: {e}")
 
-    def run_interactive_shell(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None) -> int:
-        """
-        Runs an interactive shell with PTY support.
-        Handles full TTY raw mode, window resizing, and socket forwarding.
-        Returns exit code.
-        """
-        if not self.client:
-            raise SSHError("Client not connected")
-
-        if not HAS_TTY:
-            raise SSHError("Interactive mode not supported on this platform (missing termios).")
-
-        full_command = self._build_command(command, workdir, pre_cmd)
-
-        # Open a new channel
-        transport = self.client.get_transport()
+    def _setup_channel(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None):
+        """Setup SSH channel with PTY for interactive shell."""
+        # Note: self.client is guaranteed to be not None by run_interactive_shell check
+        transport = self.client.get_transport()  # type: ignore
         if not transport:
             raise SSHError("Transport not active")
 
@@ -139,61 +136,121 @@ class SSHClientWrapper:
         try:
             cols, rows = os.get_terminal_size()
         except OSError:
-            cols, rows = 80, 24
+            cols, rows = DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS
 
         channel.get_pty(term=os.environ.get("TERM", "vt100"), width=cols, height=rows)
+
+        full_command = self._build_command(command, workdir, pre_cmd)
         channel.exec_command(full_command)
 
-        # Setup window resize handler
-        def _resize_handler(signum, frame):
-            try:
-                c, r = os.get_terminal_size()
-                channel.resize_pty(width=c, height=r)
-            except Exception:
-                pass
+        return channel
 
-        old_handler = signal.signal(signal.SIGWINCH, _resize_handler)
+    def _run_event_loop(self, channel) -> int:
+        """Run the main event loop for interactive shell."""
+        logger = get_logger()
+        channel.settimeout(0.0)
 
-        # Enter raw mode
-        old_tty_attrs = termios.tcgetattr(sys.stdin)
-        tty.setraw(sys.stdin.fileno())
+        while True:
+            r, w, x = select.select([channel, sys.stdin], [], [])
 
-        try:
-            channel.settimeout(0.0)
+            if channel in r:
+                try:
+                    data = channel.recv(BUFFER_SIZE)
+                    if len(data) == 0:
+                        break
+                    sys.stdout.buffer.write(data)
+                    sys.stdout.buffer.flush()
+                except socket.error:
+                    # Non-blocking mode may raise EAGAIN/EWOULDBLOCK
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error receiving data from channel: {e}", module="mtr.ssh")
 
-            while True:
-                r, w, x = select.select([channel, sys.stdin], [], [])
-
-                if channel in r:
-                    try:
-                        data = channel.recv(1024)
-                        if len(data) == 0:
-                            break
-                        sys.stdout.buffer.write(data)
-                        sys.stdout.buffer.flush()
-                    except socket.timeout:
-                        pass
-
-                if sys.stdin in r:
-                    data = os.read(sys.stdin.fileno(), 1024)
+            if sys.stdin in r:
+                try:
+                    data = os.read(sys.stdin.fileno(), BUFFER_SIZE)
                     if len(data) == 0:
                         break
                     channel.send(data)
+                except Exception as e:
+                    logger.warning(f"Error reading from stdin: {e}", module="mtr.ssh")
 
-            # Wait for exit status
-            # We need to block until it's closed?
-            # Usually recv returning 0 means EOF.
-
-            # channel.recv_exit_status() might block if we are not careful
-            # But since EOF is received, it should be ready.
+        # Wait for exit status with timeout protection
+        try:
+            channel.settimeout(5.0)
             exit_code = channel.recv_exit_status()
             return exit_code
+        except socket.timeout:
+            logger.warning("Timeout waiting for exit status, assuming failure", module="mtr.ssh")
+            return -1
 
-        finally:
-            # Restore terminal settings
+    def _cleanup_resources(self, channel, old_tty_attrs, old_handler):
+        """Cleanup resources with proper error handling."""
+        logger = get_logger()
+
+        # Restore terminal settings
+        try:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_tty_attrs)
+        except Exception as e:
+            logger.warning(f"Failed to restore terminal settings: {e}", module="mtr.ssh")
+
+        # Restore signal handler
+        try:
             signal.signal(signal.SIGWINCH, old_handler)
-            channel.close()
+        except Exception as e:
+            logger.warning(f"Failed to restore signal handler: {e}", module="mtr.ssh")
+
+        # Close channel
+        try:
+            if channel:
+                channel.close()
+        except Exception:
+            pass
+
+    def run_interactive_shell(self, command: str, workdir: Optional[str] = None, pre_cmd: Optional[str] = None) -> int:
+        """
+        Runs an interactive shell with PTY support.
+        Handles full TTY raw mode, window resizing, and socket forwarding.
+        Returns exit code.
+        """
+        logger = get_logger()
+
+        if not self.client:
+            raise SSHError("Client not connected")
+
+        if not HAS_TTY:
+            raise SSHError("Interactive mode not supported on this platform (missing termios).")
+
+        # Check if running in main thread (signal safety)
+        if threading.current_thread() is not threading.main_thread():
+            raise SSHError("Interactive shell must run in main thread")
+
+        # Setup channel
+        channel = self._setup_channel(command, workdir, pre_cmd)
+
+        # Create resize handler with proper error handling
+        def _resize_handler(signum, frame):
+            try:
+                if channel and channel.active:
+                    c, r = os.get_terminal_size()
+                    channel.resize_pty(width=c, height=r)
+            except OSError as e:
+                logger.debug(f"Failed to resize terminal: {e}", module="mtr.ssh")
+            except Exception as e:
+                logger.debug(f"Unexpected error in resize handler: {e}", module="mtr.ssh")
+
+        # Save old states BEFORE setting up new ones (avoid race condition)
+        old_tty_attrs = termios.tcgetattr(sys.stdin)
+        old_handler = signal.signal(signal.SIGWINCH, _resize_handler)
+
+        # Enter raw mode AFTER saving old state
+        tty.setraw(sys.stdin.fileno())
+
+        try:
+            exit_code = self._run_event_loop(channel)
+            return exit_code
+        finally:
+            self._cleanup_resources(channel, old_tty_attrs, old_handler)
 
     def close(self):
         if self.client:
