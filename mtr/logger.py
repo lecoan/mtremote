@@ -27,6 +27,30 @@ class LogLevel(Enum):
         return level_map[level_upper]
 
 
+class _NoOpLogger:
+    """No-op logger that silently discards all log messages.
+
+    This is returned by get_logger() when logging is not initialized.
+    It provides the same interface as Logger but does nothing.
+    """
+
+    def debug(self, message: str, module: str = "") -> None:
+        """No-op debug log."""
+        pass
+
+    def info(self, message: str, module: str = "") -> None:
+        """No-op info log."""
+        pass
+
+    def warning(self, message: str, module: str = "") -> None:
+        """No-op warning log."""
+        pass
+
+    def error(self, message: str, module: str = "") -> None:
+        """No-op error log."""
+        pass
+
+
 class Logger:
     """Simple file-based logger."""
 
@@ -39,11 +63,10 @@ class Logger:
         """
         self.log_file = log_file
         self.level = level
-        self._initialized = True
 
     def _write(self, level: LogLevel, message: str, module: str = ""):
         """Write log message to file if level is sufficient."""
-        if not self._initialized or level.value < self.level.value:
+        if level.value < self.level.value:
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -72,6 +95,8 @@ class Logger:
 
 # Global logger instance
 _logger: Optional[Logger] = None
+# No-op logger singleton
+_no_op_logger = _NoOpLogger()
 
 
 def setup_logging(log_file: str, level: LogLevel = LogLevel.INFO) -> Logger:
@@ -95,16 +120,14 @@ def setup_logging(log_file: str, level: LogLevel = LogLevel.INFO) -> Logger:
     return _logger
 
 
-def get_logger() -> Logger:
+def get_logger():
     """Get the global logger instance.
 
     Returns:
-        Logger instance (may be uninitialized if setup_logging not called)
+        Logger instance if logging is initialized, otherwise a no-op logger.
+        The returned object always has debug(), info(), warning(), error() methods.
     """
     global _logger
     if _logger is None:
-        # Return uninitialized logger (no-op)
-        logger = Logger.__new__(Logger)
-        logger._initialized = False
-        return logger
+        return _no_op_logger
     return _logger

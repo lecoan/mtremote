@@ -5,9 +5,12 @@ from datetime import datetime
 import click
 
 from mtr.config import ConfigError, ConfigLoader
-from mtr.logger import LogLevel, setup_logging
+from mtr.logger import LogLevel, get_logger, setup_logging
 from mtr.ssh import SSHClientWrapper, SSHError
 from mtr.sync import RsyncSyncer, SftpSyncer, SyncError
+
+# Module-level logger instance
+logger = get_logger()
 
 DEFAULT_CONFIG_TEMPLATE = """# MTRemote Configuration
 defaults:
@@ -73,7 +76,6 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
     """MTRemote: Sync and Execute code on remote server."""
 
     # Setup logging if enabled
-    logger = None
     if enable_log:
         if not log_file:
             # Generate default log file path: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log
@@ -83,15 +85,14 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
 
         try:
             level = LogLevel.from_string(log_level)
-            logger = setup_logging(log_file, level)
+            setup_logging(log_file, level)
         except ValueError:
             click.secho(f"Warning: Invalid log level '{log_level}', using INFO", fg="yellow")
-            logger = setup_logging(log_file, LogLevel.INFO)
+            setup_logging(log_file, LogLevel.INFO)
 
     if init:
         _init_config()
-        if logger:
-            logger.info("Initialized configuration file", module="mtr.cli")
+        logger.info("Initialized configuration file", module="mtr.cli")
         return
 
     if not command:
@@ -101,9 +102,8 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
     # Join command parts back into a string
     remote_cmd = " ".join(command)
 
-    if logger:
-        logger.info(f"Starting mtr with command: {remote_cmd}", module="mtr.cli")
-        logger.debug(f"Options: server={server}, sync={sync}, dry_run={dry_run}, tty={tty}", module="mtr.cli")
+    logger.info(f"Starting mtr with command: {remote_cmd}", module="mtr.cli")
+    logger.debug(f"Options: server={server}, sync={sync}, dry_run={dry_run}, tty={tty}", module="mtr.cli")
 
     # Check for interactive mode (TTY)
     # Interactive if: TTY is enabled by flag AND stdout is a real terminal
@@ -123,11 +123,9 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
     try:
         loader = ConfigLoader()
         config = loader.load(server_name=server)
-        if logger:
-            logger.info(f"Loaded configuration, target server: {config.target_server}", module="mtr.config")
+        logger.info(f"Loaded configuration, target server: {config.target_server}", module="mtr.config")
     except ConfigError as e:
-        if logger:
-            logger.error(f"Configuration error: {e}", module="mtr.config")
+        logger.error(f"Configuration error: {e}", module="mtr.config")
         if console:
             console.print(f"[bold red]Configuration Error:[/bold red] {e}")
         else:
@@ -143,8 +141,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
     pre_cmd = server_conf.get("pre_cmd")
 
     if not host or not user:
-        if logger:
-            logger.error("Missing required config: host or user", module="mtr.cli")
+        logger.error("Missing required config: host or user", module="mtr.cli")
         click.secho(
             "Error: 'host' and 'user' are required in server config.",
             fg="red",
@@ -152,9 +149,8 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
         )
         sys.exit(1)
 
-    if logger:
-        auth_method = "key" if key_filename else ("password" if password else "none")
-        logger.info(f"Connecting to {host} as {user} (auth: {auth_method})", module="mtr.ssh")
+    auth_method = "key" if key_filename else ("password" if password else "none")
+    logger.info(f"Connecting to {host} as {user} (auth: {auth_method})", module="mtr.ssh")
 
     if console:
         console.print(
@@ -208,8 +204,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
             try:
                 if dry_run:
                     click.echo(f"[DryRun] Would sync {local_dir} -> {remote_dir}")
-                    if logger:
-                        logger.info(f"[DryRun] Would sync {local_dir} -> {remote_dir}", module="mtr.sync")
+                    logger.info(f"[DryRun] Would sync {local_dir} -> {remote_dir}", module="mtr.sync")
                 else:
                     if is_interactive and console:
                         with console.status("[bold blue]Syncing code...", spinner="dots"):
@@ -217,11 +212,9 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
                     else:
                         click.secho("Syncing code...", fg="blue")
                         syncer.sync()
-                    if logger:
-                        logger.info(f"Sync completed: {local_dir} -> {remote_dir}", module="mtr.sync")
+                    logger.info(f"Sync completed: {local_dir} -> {remote_dir}", module="mtr.sync")
             except SyncError as e:
-                if logger:
-                    logger.error(f"Sync failed: {e}", module="mtr.sync")
+                logger.error(f"Sync failed: {e}", module="mtr.sync")
                 click.secho(f"Sync Failed: {e}", fg="red", err=True)
                 sys.exit(1)
 
@@ -236,23 +229,19 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
     ssh = SSHClientWrapper(host, user, key_filename=key_filename, password=password)
     try:
         ssh.connect()
-        if logger:
-            logger.info(f"SSH connection established to {host}", module="mtr.ssh")
+        logger.info(f"SSH connection established to {host}", module="mtr.ssh")
 
         if is_interactive:
             # Run interactive shell (full TTY support)
-            if logger:
-                logger.info(f"Executing interactive command: {remote_cmd}", module="mtr.cli")
+            logger.info(f"Executing interactive command: {remote_cmd}", module="mtr.cli")
             exit_code = ssh.run_interactive_shell(remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd)
-            if logger:
-                logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
+            logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
             sys.exit(exit_code)
         else:
             # Run stream mode (for scripts/pipes)
             # pty=False ensures clean output for parsing (separates stdout/stderr if we implemented that,
             # but currently streams merged or just stdout. Let's keep pty=False to avoid control chars)
-            if logger:
-                logger.info(f"Executing command: {remote_cmd}", module="mtr.cli")
+            logger.info(f"Executing command: {remote_cmd}", module="mtr.cli")
             stream = ssh.exec_command_stream(remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd, pty=False)
 
             # Consume generator and print
@@ -264,18 +253,15 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
             except StopIteration as e:
                 exit_code = e.value
 
-            if logger:
-                logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
+            logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
             sys.exit(exit_code)
 
     except SSHError as e:
-        if logger:
-            logger.error(f"SSH error: {e}", module="mtr.ssh")
+        logger.error(f"SSH error: {e}", module="mtr.ssh")
         click.secho(f"SSH Error: {e}", fg="red", err=True)
         sys.exit(1)
     finally:
-        if logger:
-            logger.info("Closing SSH connection", module="mtr.ssh")
+        logger.info("Closing SSH connection", module="mtr.ssh")
         ssh.close()
 
 

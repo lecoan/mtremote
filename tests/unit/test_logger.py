@@ -3,7 +3,7 @@ import tempfile
 
 import pytest
 
-from mtr.logger import Logger, LogLevel, get_logger, setup_logging
+from mtr.logger import Logger, LogLevel, _NoOpLogger, get_logger, setup_logging
 
 
 class TestLogger:
@@ -17,18 +17,6 @@ class TestLogger:
 
             assert logger.log_file == log_file
             assert logger.level == LogLevel.INFO
-            assert logger._initialized is True
-
-    def test_logger_not_initialized_without_setup(self):
-        """Test logger methods do nothing if not initialized."""
-        logger = Logger.__new__(Logger)
-        logger._initialized = False
-
-        # Should not raise any errors
-        logger.debug("test")
-        logger.info("test")
-        logger.warning("test")
-        logger.error("test")
 
     def test_log_level_filtering(self):
         """Test that log levels are properly filtered."""
@@ -69,6 +57,28 @@ class TestLogger:
             assert "test message" in content
 
 
+class TestNoOpLogger:
+    """Test cases for _NoOpLogger class."""
+
+    def test_no_op_logger_methods(self):
+        """Test that _NoOpLogger methods do nothing and don't raise."""
+        logger = _NoOpLogger()
+
+        # All methods should not raise any errors
+        logger.debug("test")
+        logger.info("test")
+        logger.warning("test")
+        logger.error("test")
+
+    def test_no_op_logger_with_module(self):
+        """Test that _NoOpLogger accepts module parameter."""
+        logger = _NoOpLogger()
+
+        # Should not raise with module parameter
+        logger.info("test", module="test_module")
+        logger.debug("test", module="another_module")
+
+
 class TestSetupLogging:
     """Test cases for setup_logging function."""
 
@@ -89,7 +99,8 @@ class TestSetupLogging:
             logger = setup_logging(log_file, LogLevel.DEBUG)
 
             assert isinstance(logger, Logger)
-            assert logger._initialized is True
+            assert logger.log_file == log_file
+            assert logger.level == LogLevel.DEBUG
 
     def test_get_logger_returns_same_instance(self):
         """Test that get_logger returns the same logger instance."""
@@ -102,15 +113,32 @@ class TestSetupLogging:
 
             assert logger1 is logger2
 
-    def test_get_logger_without_setup(self):
-        """Test that get_logger returns uninitialized logger if setup not called."""
+    def test_get_logger_without_setup_returns_no_op(self):
+        """Test that get_logger returns _NoOpLogger if setup not called."""
         # Reset the global logger
         import mtr.logger as logger_module
 
         logger_module._logger = None
 
         logger = get_logger()
-        assert logger._initialized is False
+        assert isinstance(logger, _NoOpLogger)
+
+    def test_no_op_logger_does_not_write(self):
+        """Test that _NoOpLogger does not write to any file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = os.path.join(tmpdir, "test.log")
+
+            # Reset to ensure we get NoOpLogger
+            import mtr.logger as logger_module
+
+            logger_module._logger = None
+
+            logger = get_logger()
+            logger.info("this should not be written")
+            logger.error("this should also not be written")
+
+            # File should not exist
+            assert not os.path.exists(log_file)
 
 
 class TestLogLevel:
