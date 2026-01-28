@@ -193,10 +193,7 @@ class TestRunEventLoop:
         # Simulate timeout on exit status
         mock_channel.recv_exit_status.side_effect = socket.timeout("Timeout")
 
-        with patch("mtr.ssh.get_logger") as mock_get_logger:
-            mock_logger = Mock()
-            mock_get_logger.return_value = mock_logger
-
+        with patch("mtr.ssh.logger") as mock_logger:
             # Execute - should return -1 on timeout
             exit_code = mock_ssh_client._run_event_loop(mock_channel)
             assert exit_code == -1
@@ -265,10 +262,7 @@ class TestCleanupResources:
         # Make terminal restore fail
         mock_tcsetattr.side_effect = OSError("Failed to restore")
 
-        with patch("mtr.ssh.get_logger") as mock_get_logger:
-            mock_logger = Mock()
-            mock_get_logger.return_value = mock_logger
-
+        with patch("mtr.ssh.logger") as mock_logger:
             # Execute - should not raise
             mock_ssh_client._cleanup_resources(mock_channel, old_attrs, old_handler)
 
@@ -288,10 +282,7 @@ class TestCleanupResources:
         # Make signal restore fail
         mock_signal.side_effect = OSError("Failed to restore")
 
-        with patch("mtr.ssh.get_logger") as mock_get_logger:
-            mock_logger = Mock()
-            mock_get_logger.return_value = mock_logger
-
+        with patch("mtr.ssh.logger") as mock_logger:
             # Execute - should not raise
             mock_ssh_client._cleanup_resources(mock_channel, old_attrs, old_handler)
 
