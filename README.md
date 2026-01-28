@@ -12,6 +12,7 @@ MTRemote 是一个专为 AI Infra 和 Python/C++ 混合开发设计的命令行�
     *   **交互模式 (Interactive)**：自动检测 TTY，支持 PTY 分配、Raw Mode、Rich UI 动画。完美支持 `vim`, `ipython`, `pdb`, `htop`。
     *   **批处理模式 (Batch)**：当被脚本调用或重定向时自动切换。禁用 PTY 和动画，输出纯净文本，适合 AI Agent 集成或 CI/CD。
 *   **环境预设 (Pre-cmd)**：支持在执行命令前自动加载环境（如 `conda activate`, `source .env`）。
+*   **调试日志**：可选的文件日志系统，按会话独立存储，便于排查问题。
 *   **零侵入**：只需在现有命令前加上 `mtr`。
 
 ## 📦 安装
@@ -74,6 +75,39 @@ mtr ipython
 mtr -s prod-node python train.py
 ```
 
+## 📖 命令行选项
+
+```bash
+mtr [OPTIONS] COMMAND [ARGS...]
+
+Options:
+  -s, --server TEXT        Target server alias
+  --sync / --no-sync       Enable/Disable code sync [default: True]
+  --dry-run                Print commands without executing
+  --tty / --no-tty         Force enable/disable TTY [default: True]
+  --enable-log             Enable logging to file
+  --log-level TEXT         Log level: DEBUG/INFO/WARNING/ERROR [default: INFO]
+  --log-file PATH          Custom log file path (default: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)
+  --init                   Initialize configuration file
+  --help                   Show this message and exit
+```
+
+### 常用选项示例
+
+```bash
+# 禁用同步，直接执行命令
+mtr --no-sync python script.py
+
+# 强制批处理模式（无颜色、无动画）
+mtr --no-tty python train.py > output.log
+
+# 启用调试日志
+mtr --enable-log --log-level DEBUG python train.py
+
+# 指定自定义日志路径
+mtr --enable-log --log-file ./debug.log python train.py
+```
+
 ## 📖 高级用法
 
 ### 1. 强制批处理模式 (--no-tty)
@@ -98,6 +132,27 @@ servers:
 支持 SSH 密码认证，但推荐使用 SSH Key。
 *   **SFTP**: 原生支持密码。
 *   **Rsync**: 需要本地安装 `sshpass` 工具才能使用密码认证。
+
+### 4. 调试日志 (--enable-log)
+当遇到问题需要排查时，可以启用文件日志：
+
+```bash
+# 启用 INFO 级别日志（默认）
+mtr --enable-log python train.py
+
+# 启用 DEBUG 级别日志（更详细）
+mtr --enable-log --log-level DEBUG python train.py
+
+# 查看日志
+cat ~/.mtr/logs/mtr_20260128_171216.log
+```
+
+日志文件按会话独立生成，格式为 `mtr_YYYYMMDD_HHMMSS.log`，包含：
+- 命令启动参数
+- 配置加载过程
+- SSH 连接状态
+- 文件同步详情
+- 命令执行结果
 
 ## 🤖 AI Agent 集成指南
 
@@ -143,4 +198,3 @@ output = run_remote_command("python tests/test_model.py")
 
 ---
 License: MIT
-
