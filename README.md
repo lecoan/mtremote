@@ -102,7 +102,7 @@ Options:
   --to TEXT                Local destination path for download (optional)
   --enable-log             Enable logging to file
   --log-level TEXT         Log level: DEBUG/INFO/WARNING/ERROR [default: INFO]
-  --log-file PATH          Custom log file path (default: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)
+  --log-file PATH          Custom log file path (default: ./.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)
   --init                   Initialize configuration file
   --help                   Show this message and exit
 ```
@@ -165,8 +165,11 @@ sudo yum install sshpass
 使用 `--get` 参数可以从远端服务器下载文件或文件夹到本地：
 
 ```bash
-# 下载文件到默认下载位置
+# 下载文件（绝对路径）
 mtr --get /remote/path/to/file.txt
+
+# 下载文件（相对路径，基于 remote_dir）
+mtr --get checkpoints/model.pt
 
 # 下载文件到指定位置
 mtr --get /remote/path/to/file.txt --to ./local/path/
@@ -177,6 +180,10 @@ mtr --get /remote/path/to/checkpoints/ --to ./backups/
 # 跳过上传同步，仅下载
 mtr --no-sync --get /remote/path/to/file.txt
 ```
+
+**路径解析规则**：
+- **绝对路径**（以 `/` 开头）：直接使用指定的完整路径
+- **相对路径**：自动拼接 `remote_dir`，例如配置 `remote_dir: "/workdir/project"`，执行 `--get checkpoints/model.pt` 将下载 `/workdir/project/checkpoints/model.pt`
 
 **配置下载目录**：
 可以在配置文件中设置默认下载位置：
@@ -208,7 +215,7 @@ mtr --enable-log python train.py
 mtr --enable-log --log-level DEBUG python train.py
 
 # 查看日志
-cat ~/.mtr/logs/mtr_20260128_171216.log
+cat ./.mtr/logs/mtr_20260128_171216.log
 ```
 
 日志文件按会话独立生成，格式为 `mtr_YYYYMMDD_HHMMSS.log`，包含：
