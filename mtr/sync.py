@@ -1,5 +1,6 @@
 import fnmatch
 import os
+import shlex
 import shutil
 import subprocess
 from abc import ABC, abstractmethod
@@ -166,6 +167,81 @@ class SftpSyncer(BaseSyncer):
         if self.transport:
             self.transport.close()
 
+    def download(self, remote_path: str, local_path: str):
+        """Download file or directory from remote to local."""
+        if not self.sftp:
+            self._connect()
+
+        try:
+            # Ensure local directory exists
+            local_dir = os.path.dirname(local_path)
+            if local_dir and not os.path.exists(local_dir):
+                os.makedirs(local_dir, exist_ok=True)
+
+            try:
+                import stat
+
+                remote_stat = self.sftp.stat(remote_path)
+                is_dir = stat.S_ISDIR(remote_stat.st_mode)
+
+                if is_dir:
+                    self._download_dir(remote_path, local_path)
+                else:
+                    self._download_file(remote_path, local_path)
+            except FileNotFoundError:
+                raise SyncError(f"Remote path not found: {remote_path}")
+            except Exception as e:
+                raise SyncError(f"Download failed: {e}")
+        finally:
+            if self.sftp:
+                self.sftp.close()
+            if self.transport:
+                self.transport.close()
+
+    def _should_download_file(self, remote_file: str, local_file: str) -> bool:
+        """Check if file should be downloaded based on size and mtime."""
+        try:
+            remote_stat = self.sftp.stat(remote_file)
+            local_stat = os.stat(local_file)
+
+            # Size different, need download
+            if remote_stat.st_size != local_stat.st_size:
+                return True
+
+            # Remote file is newer than local file
+            return int(remote_stat.st_mtime) > int(local_stat.st_mtime)
+        except FileNotFoundError:
+            return True  # Local file doesn't exist, must download
+
+    def _download_file(self, remote_file: str, local_file: str):
+        """Download a single file with incremental check."""
+        if not self._should_download_file(remote_file, local_file):
+            return  # No need to download
+
+        self.sftp.get(remote_file, local_file)
+        # Preserve permissions
+        remote_stat = self.sftp.stat(remote_file)
+        os.chmod(local_file, remote_stat.st_mode)
+
+    def _download_dir(self, remote_dir: str, local_dir: str):
+        """Recursively download a directory."""
+        if not os.path.exists(local_dir):
+            os.makedirs(local_dir, exist_ok=True)
+
+        for entry in self.sftp.listdir_attr(remote_dir):
+            remote_path = f"{remote_dir}/{entry.filename}"
+            local_path = os.path.join(local_dir, entry.filename)
+
+            if self._should_ignore(entry.filename):
+                continue
+
+            import stat
+
+            if stat.S_ISDIR(entry.st_mode):
+                self._download_dir(remote_path, local_path)
+            else:
+                self._download_file(remote_path, local_path)
+
 
 class RsyncSyncer(BaseSyncer):
     def __init__(
@@ -186,11 +262,15 @@ class RsyncSyncer(BaseSyncer):
         self.password = password
         self.port = port
 
-    def _build_rsync_command(self) -> List[str]:
-        # Ensure local dir ends with / to sync contents, not the dir itself
-        src = self.local_dir if self.local_dir.endswith("/") else f"{self.local_dir}/"
-        dest = f"{self.user}@{self.host}:{self.remote_dir}"
+    def _build_ssh_options(self) -> str:
+        """Build SSH options string for rsync."""
+        opts = f"ssh -p {self.port}"
+        if self.key_filename:
+            opts += f" -i {self.key_filename}"
+        return opts
 
+    def _build_rsync_base(self) -> List[str]:
+        """Build rsync base command with common options."""
         cmd = ["rsync", "-azq"]
 
         # Add excludes
@@ -198,31 +278,61 @@ class RsyncSyncer(BaseSyncer):
             cmd.append(f"--exclude={item}")
 
         # SSH options
-        ssh_opts = f"ssh -p {self.port}"
-        if self.key_filename:
-            ssh_opts += f" -i {self.key_filename}"
-
-        # StrictHostKeyChecking=no is often useful for automation but risky.
-        # Let's keep it standard for now.
-
-        cmd.extend(["-e", ssh_opts])
-        cmd.append(src)
-        cmd.append(dest)
-
-        # Add sshpass if needed
-        if self.password and not self.key_filename:
-            cmd = ["sshpass", "-p", self.password] + cmd
+        cmd.extend(["-e", self._build_ssh_options()])
 
         return cmd
 
-    def sync(self):
+    def _wrap_with_sshpass(self, cmd: List[str]) -> List[str]:
+        """Wrap command with sshpass if password authentication is used."""
+        if self.password and not self.key_filename:
+            return ["sshpass", "-p", self.password] + cmd
+        return cmd
+
+    def _check_sshpass(self):
+        """Check if sshpass is available when password authentication is used."""
         if self.password and not self.key_filename:
             if not shutil.which("sshpass"):
                 raise SyncError("Rsync with password requires 'sshpass'. Please install it or use SSH Key.")
 
+    def _build_rsync_command(self) -> List[str]:
+        """Build rsync command for uploading (local -> remote)."""
+        # Ensure local dir ends with / to sync contents, not the dir itself
+        src = self.local_dir if self.local_dir.endswith("/") else f"{self.local_dir}/"
+        dest = f"{self.user}@{self.host}:{shlex.quote(self.remote_dir)}"
+
+        cmd = self._build_rsync_base()
+        cmd.extend([src, dest])
+
+        return self._wrap_with_sshpass(cmd)
+
+    def _build_rsync_download_command(self, remote_path: str, local_path: str) -> List[str]:
+        """Build rsync command for downloading (remote -> local)."""
+        src = f"{self.user}@{self.host}:{shlex.quote(remote_path)}"
+
+        cmd = self._build_rsync_base()
+        cmd.extend([src, local_path])
+
+        return self._wrap_with_sshpass(cmd)
+
+    def sync(self):
+        self._check_sshpass()
         cmd = self._build_rsync_command()
         try:
-            # Run rsync
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:
             raise SyncError(f"Rsync failed with exit code {e.returncode}")
+
+    def download(self, remote_path: str, local_path: str):
+        """Download file or directory from remote to local."""
+        self._check_sshpass()
+
+        # Ensure local parent directory exists
+        local_dir = os.path.dirname(local_path)
+        if local_dir and not os.path.exists(local_dir):
+            os.makedirs(local_dir, exist_ok=True)
+
+        cmd = self._build_rsync_download_command(remote_path, local_path)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            raise SyncError(f"Rsync download failed with exit code {e.returncode}")

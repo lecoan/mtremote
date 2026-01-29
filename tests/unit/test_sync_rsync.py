@@ -72,3 +72,71 @@ def test_rsync_missing_sshpass(mocker):
 
     with pytest.raises(SyncError, match="sshpass"):
         syncer.sync()
+
+
+def test_rsync_download_command_generation():
+    """Test download command generation."""
+    import shlex
+
+    syncer = RsyncSyncer(
+        local_dir="/local/project",
+        remote_dir="/remote/project",
+        host="192.168.1.1",
+        user="dev",
+        key_filename="~/.ssh/id_rsa",
+        exclude=[".git", "__pycache__"],
+    )
+
+    cmd_list = syncer._build_rsync_download_command("/remote/file.txt", "/local/file.txt")
+
+    assert "rsync" in cmd_list[0]
+    assert "-avz" in cmd_list or any(x.startswith("-") and "a" in x for x in cmd_list)
+
+    # Check source (remote path with shlex.quote)
+    expected_src = f"dev@192.168.1.1:{shlex.quote('/remote/file.txt')}"
+    assert expected_src in cmd_list
+
+    # Check dest (local path)
+    assert "/local/file.txt" in cmd_list
+
+    # Check SSH args
+    assert "-e" in cmd_list
+    e_index = cmd_list.index("-e")
+    ssh_cmd = cmd_list[e_index + 1]
+    assert "ssh" in ssh_cmd
+    assert "-i ~/.ssh/id_rsa" in ssh_cmd
+
+
+def test_rsync_download_with_sshpass(mocker):
+    """Test sshpass command generation for download."""
+    mocker.patch("shutil.which", return_value="/usr/bin/sshpass")
+
+    syncer = RsyncSyncer(
+        local_dir="/local",
+        remote_dir="/remote",
+        host="host",
+        user="user",
+        password="password",
+    )
+
+    cmd = syncer._build_rsync_download_command("/remote/file.txt", "/local/file.txt")
+    assert cmd[0] == "sshpass"
+    assert cmd[1] == "-p"
+    assert cmd[2] == "password"
+    assert "rsync" in cmd
+
+
+def test_rsync_download_missing_sshpass(mocker):
+    """Test error raised when sshpass is missing for download."""
+    mocker.patch("shutil.which", return_value=None)
+
+    syncer = RsyncSyncer(
+        local_dir="/local",
+        remote_dir="/remote",
+        host="host",
+        user="user",
+        password="password",
+    )
+
+    with pytest.raises(SyncError, match="sshpass"):
+        syncer.download("/remote/file.txt", "/local/file.txt")

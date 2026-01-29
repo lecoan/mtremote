@@ -8,6 +8,7 @@ MTRemote 是一个专为 AI Infra 和 Python/C++ 混合开发设计的命令行�
 *   **智能同步引擎**：
     *   **Rsync (推荐)**：调用系统 `rsync`，支持增量同步，速度极快。支持 `sshpass` 自动处理密码认证。
     *   **SFTP (兼容)**：纯 Python 实现，适用于无 `rsync` 的环境，配置简单。
+*   **双向同步**：支持从远端下载文件/文件夹到本地（`--get` 参数）。
 *   **双模式交互 (Dual-Mode Interaction)**：
     *   **交互模式 (Interactive)**：自动检测 TTY，支持 PTY 分配、Raw Mode、Rich UI 动画。完美支持 `vim`, `ipython`, `pdb`, `htop`。
     *   **批处理模式 (Batch)**：当被脚本调用或重定向时自动切换。禁用 PTY 和动画，输出纯净文本，适合 AI Agent 集成或 CI/CD。
@@ -57,6 +58,7 @@ mtr --init
 defaults:
   sync: "rsync"  # 或 "sftp"
   exclude: [".git/", "__pycache__/"]
+  download_dir: "./downloads"  # 默认下载位置（可选）
 
 servers:
   gpu-node:
@@ -64,6 +66,7 @@ servers:
     user: "your_username"
     key_filename: "~/.ssh/id_rsa"
     remote_dir: "/home/your_username/projects/my-project"
+    download_dir: "./backups/gpu"  # 该服务器的下载位置（可选，覆盖默认值）
     pre_cmd: "source ~/.bashrc && conda activate pytorch_env"
 ```
 
@@ -95,6 +98,8 @@ Options:
   --sync / --no-sync       Enable/Disable code sync [default: True]
   --dry-run                Print commands without executing
   --tty / --no-tty         Force enable/disable TTY [default: True]
+  --get TEXT               Remote path to download from
+  --to TEXT                Local destination path for download (optional)
   --enable-log             Enable logging to file
   --log-level TEXT         Log level: DEBUG/INFO/WARNING/ERROR [default: INFO]
   --log-file PATH          Custom log file path (default: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)
@@ -156,7 +161,43 @@ sudo apt-get install sshpass
 sudo yum install sshpass
 ```
 
-### 4. 调试日志 (--enable-log)
+### 4. 从远端下载文件 (--get)
+使用 `--get` 参数可以从远端服务器下载文件或文件夹到本地：
+
+```bash
+# 下载文件到当前目录
+mtr --get /remote/path/to/file.txt
+
+# 下载文件到指定位置
+mtr --get /remote/path/to/file.txt --to ./local/path/
+
+# 下载整个文件夹
+mtr --get /remote/path/to/checkpoints/ --to ./backups/
+
+# 跳过上传同步，仅下载
+mtr --no-sync --get /remote/path/to/file.txt
+```
+
+**配置下载目录**：
+可以在配置文件中设置默认下载位置：
+
+```yaml
+defaults:
+  download_dir: "./downloads"  # 默认下载位置
+
+servers:
+  gpu-node:
+    host: "192.168.1.100"
+    download_dir: "./backups/gpu"  # 该服务器的下载位置（覆盖默认值）
+```
+
+**路径解析优先级**：
+1. `--to` 参数指定的路径
+2. 服务器配置中的 `download_dir`
+3. 默认配置中的 `download_dir`
+4. 当前工作目录
+
+### 5. 调试日志 (--enable-log)
 当遇到问题需要排查时，可以启用文件日志：
 
 ```bash

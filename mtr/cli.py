@@ -20,6 +20,9 @@ defaults:
     - "__pycache__/"
     - "*.pyc"
 
+  # 默认下载位置（可选，使用 --get 时生效）
+  # download_dir: "./downloads"
+
 servers:
   # === 服务器示例 ===
   dev-node:
@@ -36,7 +39,10 @@ servers:
 
     # 强制同步引擎 (可选)
     # sync: "sftp"
-"""
+
+    # 该服务器的下载位置（可选，覆盖 defaults）
+    # download_dir: "./backups/dev-node"
+  """
 
 
 def _init_config():
@@ -68,8 +74,10 @@ def _init_config():
 @click.option("--enable-log", is_flag=True, help="Enable logging to file")
 @click.option("--log-level", default="INFO", help="Log level (DEBUG/INFO/WARNING/ERROR)")
 @click.option("--log-file", help="Path to log file (default: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)")
+@click.option("--get", "remote_get_path", help="Remote path to download from")
+@click.option("--to", "local_dest_path", help="Local destination path for download (optional)")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, command):
+def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remote_get_path, local_dest_path, command):
     """MTRemote: Sync and Execute code on remote server."""
 
     # Get logger instance (will be no-op if not setup)
@@ -99,7 +107,10 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
         logger.info("Initialized configuration file", module="mtr.cli")
         return
 
-    if not command:
+    # Handle --get mode
+    cli_dest = local_dest_path
+
+    if not command and not remote_get_path:
         click.echo(cli.get_help(click.get_current_context()))
         return
 
@@ -225,7 +236,78 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
                 click.secho(f"Sync Failed: {e}", fg="red", err=True)
                 sys.exit(1)
 
-    # 3. Execute Command
+    # 3. Download from remote (if --get is specified)
+    if remote_get_path:
+        # Resolve local destination path
+        if cli_dest:
+            local_dest = cli_dest
+        else:
+            # Use config: server > defaults > current directory
+            download_base = server_conf.get("download_dir") or config.global_defaults.get("download_dir") or "."
+            remote_basename = os.path.basename(remote_get_path.rstrip("/"))
+            local_dest = os.path.join(download_base, remote_basename)
+
+        # Expand user path
+        local_dest = os.path.expanduser(local_dest)
+
+        # Resolve exclude
+        exclude = config.global_defaults.get("exclude", []) + server_conf.get("exclude", [])
+
+        # Determine engine
+        engine = server_conf.get("sync", config.global_defaults.get("sync", "rsync"))
+
+        if engine == "rsync":
+            syncer = RsyncSyncer(
+                local_dir=".",  # Not used for download
+                remote_dir=".",  # Not used for download
+                host=host,
+                user=user,
+                key_filename=key_filename,
+                password=password,
+                port=port,
+                exclude=exclude,
+            )
+        elif engine == "sftp":
+            syncer = SftpSyncer(
+                local_dir=".",  # Not used for download
+                remote_dir=".",  # Not used for download
+                host=host,
+                user=user,
+                key_filename=key_filename,
+                password=password,
+                port=port,
+                exclude=exclude,
+            )
+        else:
+            click.secho(
+                f"Warning: Sync engine '{engine}' not supported yet.",
+                fg="yellow",
+            )
+            sys.exit(1)
+
+        try:
+            if dry_run:
+                click.echo(f"[DryRun] Would download {remote_get_path} -> {local_dest}")
+                logger.info(f"[DryRun] Would download {remote_get_path} -> {local_dest}", module="mtr.sync")
+            else:
+                if is_interactive and console:
+                    with console.status(f"[bold blue]Downloading {remote_get_path}...", spinner="dots"):
+                        syncer.download(remote_get_path, local_dest)
+                    console.print(f"✅ [green]Downloaded:[/green] {remote_get_path} -> {local_dest}")
+                else:
+                    click.secho(f"Downloading {remote_get_path}...", fg="blue")
+                    syncer.download(remote_get_path, local_dest)
+                    click.secho(f"Download completed: {local_dest}", fg="green")
+                logger.info(f"Download completed: {remote_get_path} -> {local_dest}", module="mtr.sync")
+        except SyncError as e:
+            logger.error(f"Download failed: {e}", module="mtr.sync")
+            click.secho(f"Download Failed: {e}", fg="red", err=True)
+            sys.exit(1)
+
+        # Download mode doesn't execute commands
+        return
+
+    # 4. Execute Command
     if not is_interactive:
         click.secho(f"Executing: {remote_cmd}", fg="blue")
 
