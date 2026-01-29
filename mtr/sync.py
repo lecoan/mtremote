@@ -20,7 +20,7 @@ class BaseSyncer(ABC):
         self.exclude = exclude
 
     @abstractmethod
-    def sync(self):
+    def sync(self, show_progress: bool = False, progress_callback=None):
         pass
 
 
@@ -110,7 +110,7 @@ class SftpSyncer(BaseSyncer):
                 except OSError:
                     pass  # Already exists maybe
 
-    def sync(self):
+    def sync(self, show_progress: bool = False, progress_callback=None):
         if not self.sftp:
             self._connect()
 
@@ -156,7 +156,9 @@ class SftpSyncer(BaseSyncer):
                     pass  # Does not exist, must upload
 
                 if should_upload:
-                    # print(f"Uploading {local_file} -> {remote_file}")
+                    # Call progress callback if provided
+                    if show_progress and progress_callback:
+                        progress_callback(local_file)
                     self.sftp.put(local_file, remote_file)
                     # Preserve permissions
                     mode = os.stat(local_file).st_mode
@@ -167,7 +169,7 @@ class SftpSyncer(BaseSyncer):
         if self.transport:
             self.transport.close()
 
-    def download(self, remote_path: str, local_path: str):
+    def download(self, remote_path: str, local_path: str, show_progress: bool = False, progress_callback=None):
         """Download file or directory from remote to local."""
         if not self.sftp:
             self._connect()
@@ -185,9 +187,13 @@ class SftpSyncer(BaseSyncer):
                 is_dir = stat.S_ISDIR(remote_stat.st_mode)
 
                 if is_dir:
-                    self._download_dir(remote_path, local_path)
+                    self._download_dir(
+                        remote_path, local_path, show_progress=show_progress, progress_callback=progress_callback
+                    )
                 else:
-                    self._download_file(remote_path, local_path)
+                    self._download_file(
+                        remote_path, local_path, show_progress=show_progress, progress_callback=progress_callback
+                    )
             except FileNotFoundError:
                 raise SyncError(f"Remote path not found: {remote_path}")
             except Exception as e:
@@ -213,17 +219,21 @@ class SftpSyncer(BaseSyncer):
         except FileNotFoundError:
             return True  # Local file doesn't exist, must download
 
-    def _download_file(self, remote_file: str, local_file: str):
+    def _download_file(self, remote_file: str, local_file: str, show_progress: bool = False, progress_callback=None):
         """Download a single file with incremental check."""
         if not self._should_download_file(remote_file, local_file):
             return  # No need to download
+
+        # Call progress callback if provided
+        if show_progress and progress_callback:
+            progress_callback(remote_file)
 
         self.sftp.get(remote_file, local_file)
         # Preserve permissions
         remote_stat = self.sftp.stat(remote_file)
         os.chmod(local_file, remote_stat.st_mode)
 
-    def _download_dir(self, remote_dir: str, local_dir: str):
+    def _download_dir(self, remote_dir: str, local_dir: str, show_progress: bool = False, progress_callback=None):
         """Recursively download a directory."""
         if not os.path.exists(local_dir):
             os.makedirs(local_dir, exist_ok=True)
@@ -238,9 +248,9 @@ class SftpSyncer(BaseSyncer):
             import stat
 
             if stat.S_ISDIR(entry.st_mode):
-                self._download_dir(remote_path, local_path)
+                self._download_dir(remote_path, local_path, show_progress=show_progress, progress_callback=progress_callback)
             else:
-                self._download_file(remote_path, local_path)
+                self._download_file(remote_path, local_path, show_progress=show_progress, progress_callback=progress_callback)
 
 
 class RsyncSyncer(BaseSyncer):
@@ -269,9 +279,14 @@ class RsyncSyncer(BaseSyncer):
             opts += f" -i {self.key_filename}"
         return opts
 
-    def _build_rsync_base(self) -> List[str]:
+    def _build_rsync_base(self, show_progress: bool = False) -> List[str]:
         """Build rsync base command with common options."""
-        cmd = ["rsync", "-azq"]
+        if show_progress:
+            # In progress mode, use -av --info=NAME to show filenames only
+            cmd = ["rsync", "-av", "--info=NAME"]
+        else:
+            # Silent mode
+            cmd = ["rsync", "-azq"]
 
         # Add excludes
         for item in self.exclude:
@@ -294,35 +309,115 @@ class RsyncSyncer(BaseSyncer):
             if not shutil.which("sshpass"):
                 raise SyncError("Rsync with password requires 'sshpass'. Please install it or use SSH Key.")
 
-    def _build_rsync_command(self) -> List[str]:
+    def _check_rsync_version(self) -> tuple:
+        """Check local rsync version and return (major, minor, patch) tuple.
+
+        Returns:
+            Tuple of (major, minor, patch) version numbers
+        Raises:
+            SyncError: If rsync is not installed or version cannot be parsed
+        """
+        try:
+            result = subprocess.run(["rsync", "--version"], capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                raise SyncError("Failed to check rsync version. Is rsync installed?")
+
+            # Parse version from first line, e.g., "rsync  version 3.2.5  protocol version 31"
+            first_line = result.stdout.split("\n")[0]
+            import re
+
+            match = re.search(r"version\s+(\d+)\.(\d+)\.(\d+)", first_line)
+            if not match:
+                # Try alternative format: "rsync version 2.6.9 compatible"
+                match = re.search(r"version\s+(\d+)\.(\d+)\.(\d+)", first_line)
+                if not match:
+                    raise SyncError(f"Cannot parse rsync version from: {first_line}")
+
+            major, minor, patch = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return (major, minor, patch)
+        except FileNotFoundError:
+            raise SyncError("rsync not found. Please install rsync.")
+        except subprocess.TimeoutExpired:
+            raise SyncError("Timeout while checking rsync version.")
+        except Exception as e:
+            raise SyncError(f"Failed to check rsync version: {e}")
+
+    def _is_rsync_version_supported(self, min_version: tuple = (3, 1, 0)) -> bool:
+        """Check if local rsync version meets minimum requirement.
+
+        Args:
+            min_version: Minimum required version as (major, minor, patch) tuple
+        Returns:
+            True if version is supported, False otherwise
+        """
+        try:
+            current_version = self._check_rsync_version()
+            return current_version >= min_version
+        except SyncError:
+            return False
+
+    def _build_rsync_command(self, show_progress: bool = False) -> List[str]:
         """Build rsync command for uploading (local -> remote)."""
         # Ensure local dir ends with / to sync contents, not the dir itself
         src = self.local_dir if self.local_dir.endswith("/") else f"{self.local_dir}/"
         dest = f"{self.user}@{self.host}:{shlex.quote(self.remote_dir)}"
 
-        cmd = self._build_rsync_base()
+        cmd = self._build_rsync_base(show_progress=show_progress)
         cmd.extend([src, dest])
 
         return self._wrap_with_sshpass(cmd)
 
-    def _build_rsync_download_command(self, remote_path: str, local_path: str) -> List[str]:
+    def _build_rsync_download_command(self, remote_path: str, local_path: str, show_progress: bool = False) -> List[str]:
         """Build rsync command for downloading (remote -> local)."""
         src = f"{self.user}@{self.host}:{shlex.quote(remote_path)}"
 
-        cmd = self._build_rsync_base()
+        cmd = self._build_rsync_base(show_progress=show_progress)
         cmd.extend([src, local_path])
 
         return self._wrap_with_sshpass(cmd)
 
-    def sync(self):
+    def sync(self, show_progress: bool = False, progress_callback=None):
         self._check_sshpass()
-        cmd = self._build_rsync_command()
+
+        # Check rsync version if progress mode is requested
+        if show_progress and progress_callback:
+            if not self._is_rsync_version_supported():
+                version = self._check_rsync_version()
+                raise SyncError(
+                    f"rsync version {version[0]}.{version[1]}.{version[2]} is too old. "
+                    f"Progress display requires rsync >= 3.1.0. "
+                    f"Please upgrade rsync or use --no-tty mode."
+                )
+
+        cmd = self._build_rsync_command(show_progress=show_progress)
+
         try:
-            subprocess.run(cmd, check=True)
+            if show_progress and progress_callback:
+                # Run with real-time output parsing for progress display
+                process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True
+                )
+
+                # Parse rsync output line by line
+                for line in process.stdout:
+                    line = line.strip()
+                    # Skip empty lines and summary lines
+                    if line and not line.startswith("sent") and not line.startswith("total"):
+                        # Extract filename from rsync output
+                        # Rsync --info=NAME outputs filenames directly
+                        if not line.startswith("receiving") and not line.startswith("building"):
+                            progress_callback(line)
+
+                process.wait()
+                if process.returncode != 0:
+                    raise SyncError(f"Rsync failed with exit code {process.returncode}")
+            else:
+                # Silent mode - use subprocess.run
+                subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:
             raise SyncError(f"Rsync failed with exit code {e.returncode}")
 
-    def download(self, remote_path: str, local_path: str):
+    def download(self, remote_path: str, local_path: str, show_progress: bool = False, progress_callback=None):
         """Download file or directory from remote to local."""
         self._check_sshpass()
 
@@ -331,8 +426,29 @@ class RsyncSyncer(BaseSyncer):
         if local_dir and not os.path.exists(local_dir):
             os.makedirs(local_dir, exist_ok=True)
 
-        cmd = self._build_rsync_download_command(remote_path, local_path)
+        cmd = self._build_rsync_download_command(remote_path, local_path, show_progress=show_progress)
         try:
-            subprocess.run(cmd, check=True)
+            if show_progress and progress_callback:
+                # Run with real-time output parsing for progress display
+                process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True
+                )
+
+                # Parse rsync output line by line
+                for line in process.stdout:
+                    line = line.strip()
+                    # Skip empty lines and summary lines
+                    if line and not line.startswith("sent") and not line.startswith("total"):
+                        # Extract filename from rsync output
+                        # Rsync --info=NAME outputs filenames directly
+                        if not line.startswith("receiving") and not line.startswith("building"):
+                            progress_callback(line)
+
+                process.wait()
+                if process.returncode != 0:
+                    raise SyncError(f"Rsync download failed with exit code {process.returncode}")
+            else:
+                # Silent mode - use subprocess.run
+                subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:
             raise SyncError(f"Rsync download failed with exit code {e.returncode}")

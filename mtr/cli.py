@@ -225,11 +225,28 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
                     logger.info(f"[DryRun] Would sync {local_dir} -> {remote_dir}", module="mtr.sync")
                 else:
                     if is_interactive and console:
-                        with console.status("[bold blue]Syncing code...", spinner="dots"):
-                            syncer.sync()
+                        # TTY mode: single line real-time update using Rich Live
+                        from rich.live import Live
+                        from rich.text import Text
+
+                        with Live(Text("Starting sync...", style="blue"), refresh_per_second=10) as live:
+
+                            def show_sync_progress(filename):
+                                # Get relative path for cleaner display
+                                rel_path = os.path.relpath(filename, local_dir)
+                                live.update(Text(f"Syncing: {rel_path}", style="blue"))
+
+                            syncer.sync(show_progress=True, progress_callback=show_sync_progress)
+                            live.update(Text("Sync completed!", style="green"))
                     else:
+                        # no_tty mode: print each file on new line
+                        def show_sync_progress(filename):
+                            rel_path = os.path.relpath(filename, local_dir)
+                            click.echo(f"Syncing: {rel_path}")
+
                         click.secho("Syncing code...", fg="blue")
-                        syncer.sync()
+                        syncer.sync(show_progress=True, progress_callback=show_sync_progress)
+                        click.secho("Sync completed!", fg="green")
                     logger.info(f"Sync completed: {local_dir} -> {remote_dir}", module="mtr.sync")
             except SyncError as e:
                 logger.error(f"Sync failed: {e}", module="mtr.sync")
@@ -298,12 +315,27 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
                 logger.info(f"[DryRun] Would download {remote_get_path} -> {local_dest}", module="mtr.sync")
             else:
                 if is_interactive and console:
-                    with console.status(f"[bold blue]Downloading {remote_get_path}...", spinner="dots"):
-                        syncer.download(remote_get_path, local_dest)
+                    # TTY mode: single line real-time update using Rich Live
+                    from rich.live import Live
+                    from rich.text import Text
+
+                    with Live(Text("Starting download...", style="blue"), refresh_per_second=10) as live:
+
+                        def show_download_progress(filename):
+                            live.update(Text(f"Downloading: {filename}", style="blue"))
+
+                        syncer.download(
+                            remote_get_path, local_dest, show_progress=True, progress_callback=show_download_progress
+                        )
+                        live.update(Text("Download completed!", style="green"))
                     console.print(f"✅ [green]Downloaded:[/green] {remote_get_path} -> {local_dest}")
                 else:
+                    # no_tty mode: print each file on new line
+                    def show_download_progress(filename):
+                        click.echo(f"Downloading: {filename}")
+
                     click.secho(f"Downloading {remote_get_path}...", fg="blue")
-                    syncer.download(remote_get_path, local_dest)
+                    syncer.download(remote_get_path, local_dest, show_progress=True, progress_callback=show_download_progress)
                     click.secho(f"Download completed: {local_dest}", fg="green")
                 logger.info(f"Download completed: {remote_get_path} -> {local_dest}", module="mtr.sync")
         except SyncError as e:

@@ -30,11 +30,21 @@ pip install mtr-cli
 
 MTRemote 需要以下系统命令：
 
-| 命令 | 用途 | 安装方式 |
-|------|------|----------|
-| `ssh` | 交互式 Shell (TTY) | macOS/Linux 自带，或 `brew install openssh` |
-| `rsync` | 快速文件同步 (推荐) | macOS/Linux 自带 |
-| `sshpass` | 密码认证 (可选) | `brew install hudochenkov/sshpass/sshpass` (macOS) / `apt install sshpass` (Ubuntu) |
+| 命令 | 用途 | 安装方式 | 版本要求 |
+|------|------|----------|----------|
+| `ssh` | 交互式 Shell (TTY) | macOS/Linux 自带，或 `brew install openssh` | - |
+| `rsync` | 快速文件同步 (推荐) | macOS/Linux 自带 | **≥ 3.1.0** (TTY 进度显示需要) |
+| `sshpass` | 密码认证 (可选) | `brew install hudochenkov/sshpass/sshpass` (macOS) / `apt install sshpass` (Ubuntu) | - |
+
+**注意**：macOS 自带的 rsync 版本较旧（2.6.9），不支持 TTY 模式下的进度显示。建议通过 Homebrew 安装新版：
+
+```bash
+# macOS 用户建议升级 rsync
+brew install rsync
+
+# 验证版本
+rsync --version  # 应显示 3.1.0 或更高版本
+```
 
 **注意**：交互式 Shell 功能（如 `mtr bash`, `mtr ipython`）**必须**安装 `ssh`。密码认证**必须**安装 `sshpass`。
 
