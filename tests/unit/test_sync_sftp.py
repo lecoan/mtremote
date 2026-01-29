@@ -17,6 +17,7 @@ def mock_sftp_syncer():
         user="dev",
         password="password",
         exclude=[".git", "__pycache__"],
+        respect_gitignore=False,
     )
     return syncer
 
@@ -176,3 +177,30 @@ def test_sftp_download_connection_closed_on_error(mocker, mock_sftp_syncer):
     # Verify connection was still closed
     mock_sftp.close.assert_called_once()
     mock_transport.close.assert_called_once()
+
+
+def test_sftp_respect_gitignore_true_raises_error():
+    """Test that SftpSyncer raises error when respect_gitignore is True."""
+    with pytest.raises(SyncError, match="respect_gitignore is not supported in SFTP mode"):
+        SftpSyncer(
+            local_dir="/local/project",
+            remote_dir="/remote/project",
+            host="192.168.1.1",
+            user="dev",
+            password="password",
+            respect_gitignore=True,
+        )
+
+
+def test_sftp_respect_gitignore_false_works():
+    """Test that SftpSyncer works when respect_gitignore is False."""
+    # This should not raise an error
+    syncer = SftpSyncer(
+        local_dir="/local/project",
+        remote_dir="/remote/project",
+        host="192.168.1.1",
+        user="dev",
+        password="password",
+        respect_gitignore=False,
+    )
+    assert syncer.respect_gitignore is False

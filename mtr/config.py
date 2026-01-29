@@ -19,6 +19,20 @@ class Config:
     server_config: Dict[str, Any]
     global_defaults: Dict[str, Any]
 
+    def get_respect_gitignore(self) -> bool:
+        """Get respect_gitignore setting, default True.
+
+        Priority: server config > global defaults > True (default)
+        """
+        # Check server config first
+        if "respect_gitignore" in self.server_config:
+            return self.server_config["respect_gitignore"]
+        # Then check global defaults
+        if "respect_gitignore" in self.global_defaults:
+            return self.global_defaults["respect_gitignore"]
+        # Default to True
+        return True
+
 
 class ConfigLoader:
     def __init__(self, config_path: Optional[str] = None):

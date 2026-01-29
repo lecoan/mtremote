@@ -14,10 +14,11 @@ class SyncError(Exception):
 
 
 class BaseSyncer(ABC):
-    def __init__(self, local_dir: str, remote_dir: str, exclude: List[str]):
+    def __init__(self, local_dir: str, remote_dir: str, exclude: List[str], respect_gitignore: bool = True):
         self.local_dir = local_dir
         self.remote_dir = remote_dir
         self.exclude = exclude
+        self.respect_gitignore = respect_gitignore
 
     @abstractmethod
     def sync(self, show_progress: bool = False, progress_callback=None):
@@ -35,8 +36,9 @@ class SftpSyncer(BaseSyncer):
         password: Optional[str] = None,
         port: int = 22,
         exclude: List[str] = None,
+        respect_gitignore: bool = True,
     ):
-        super().__init__(local_dir, remote_dir, exclude or [])
+        super().__init__(local_dir, remote_dir, exclude or [], respect_gitignore)
         self.host = host
         self.user = user
         self.key_filename = key_filename
@@ -44,6 +46,13 @@ class SftpSyncer(BaseSyncer):
         self.port = port
         self.transport = None
         self.sftp = None
+
+        # SFTP mode does not support respect_gitignore
+        if respect_gitignore:
+            raise SyncError(
+                "respect_gitignore is not supported in SFTP mode. "
+                "Please set respect_gitignore to false in your config or use rsync mode."
+            )
 
     def _should_ignore(self, filename: str) -> bool:
         for pattern in self.exclude:
@@ -264,8 +273,9 @@ class RsyncSyncer(BaseSyncer):
         password: Optional[str] = None,
         port: int = 22,
         exclude: List[str] = None,
+        respect_gitignore: bool = True,
     ):
-        super().__init__(local_dir, remote_dir, exclude or [])
+        super().__init__(local_dir, remote_dir, exclude or [], respect_gitignore)
         self.host = host
         self.user = user
         self.key_filename = key_filename
@@ -287,6 +297,12 @@ class RsyncSyncer(BaseSyncer):
         else:
             # Silent mode
             cmd = ["rsync", "-azq"]
+
+        # Add gitignore filter if enabled
+        if self.respect_gitignore:
+            gitignore_path = os.path.join(self.local_dir, ".gitignore")
+            if os.path.exists(gitignore_path):
+                cmd.append("--filter=:- .gitignore")
 
         # Add excludes
         for item in self.exclude:

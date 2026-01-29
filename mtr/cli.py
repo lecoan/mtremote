@@ -15,6 +15,11 @@ defaults:
   # 选项: "rsync" (推荐), "sftp"
   sync: "rsync"
 
+  # 是否尊重 .gitignore 文件（仅 rsync 模式支持）
+  # 设置为 true 时，rsync 会自动读取项目根目录的 .gitignore 并排除匹配的文件
+  # SFTP 模式不支持此选项，如启用会报错
+  respect_gitignore: true
+
   exclude:
     - ".git/"
     - "__pycache__/"
@@ -186,6 +191,9 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
         # Resolve exclude
         exclude = config.global_defaults.get("exclude", []) + server_conf.get("exclude", [])
 
+        # Get respect_gitignore setting
+        respect_gitignore = config.get_respect_gitignore()
+
         # Determine engine
         engine = server_conf.get("sync", config.global_defaults.get("sync", "rsync"))
 
@@ -199,6 +207,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
                 password=password,
                 port=port,
                 exclude=exclude,
+                respect_gitignore=respect_gitignore,
             )
         elif engine == "sftp":
             syncer = SftpSyncer(
@@ -210,6 +219,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
                 password=password,
                 port=port,
                 exclude=exclude,
+                respect_gitignore=respect_gitignore,
             )
         else:
             click.secho(
@@ -277,6 +287,9 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
         # Resolve exclude
         exclude = config.global_defaults.get("exclude", []) + server_conf.get("exclude", [])
 
+        # Get respect_gitignore setting
+        respect_gitignore = config.get_respect_gitignore()
+
         # Determine engine
         engine = server_conf.get("sync", config.global_defaults.get("sync", "rsync"))
 
@@ -290,6 +303,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
                 password=password,
                 port=port,
                 exclude=exclude,
+                respect_gitignore=respect_gitignore,
             )
         elif engine == "sftp":
             syncer = SftpSyncer(
@@ -301,6 +315,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
                 password=password,
                 port=port,
                 exclude=exclude,
+                respect_gitignore=respect_gitignore,
             )
         else:
             click.secho(

@@ -275,3 +275,94 @@ def test_rsync_download_missing_sshpass(mocker):
 
     with pytest.raises(SyncError, match="sshpass"):
         syncer.download("/remote/file.txt", "/local/file.txt")
+
+
+def test_rsync_with_gitignore_enabled(tmp_path):
+    """Test rsync command includes gitignore filter when enabled and .gitignore exists."""
+    # Create a temporary .gitignore file
+    gitignore_file = tmp_path / ".gitignore"
+    gitignore_file.write_text("*.log\nnode_modules/\n")
+
+    syncer = RsyncSyncer(
+        local_dir=str(tmp_path),
+        remote_dir="/remote/project",
+        host="192.168.1.1",
+        user="dev",
+        key_filename="~/.ssh/id_rsa",
+        exclude=[".git"],
+        respect_gitignore=True,
+    )
+
+    cmd_list = syncer._build_rsync_command()
+
+    # Check that gitignore filter is included
+    assert "--filter=:- .gitignore" in cmd_list
+
+    # Check that regular exclude is still there
+    assert "--exclude=.git" in cmd_list
+
+
+def test_rsync_with_gitignore_disabled(tmp_path):
+    """Test rsync command does not include gitignore filter when disabled."""
+    # Create a temporary .gitignore file
+    gitignore_file = tmp_path / ".gitignore"
+    gitignore_file.write_text("*.log\n")
+
+    syncer = RsyncSyncer(
+        local_dir=str(tmp_path),
+        remote_dir="/remote/project",
+        host="192.168.1.1",
+        user="dev",
+        key_filename="~/.ssh/id_rsa",
+        exclude=[".git"],
+        respect_gitignore=False,
+    )
+
+    cmd_list = syncer._build_rsync_command()
+
+    # Check that gitignore filter is NOT included
+    assert "--filter=:- .gitignore" not in cmd_list
+
+    # Check that regular exclude is still there
+    assert "--exclude=.git" in cmd_list
+
+
+def test_rsync_with_gitignore_no_gitignore_file(tmp_path):
+    """Test rsync command does not include gitignore filter when .gitignore doesn't exist."""
+    syncer = RsyncSyncer(
+        local_dir=str(tmp_path),
+        remote_dir="/remote/project",
+        host="192.168.1.1",
+        user="dev",
+        key_filename="~/.ssh/id_rsa",
+        respect_gitignore=True,
+    )
+
+    cmd_list = syncer._build_rsync_command()
+
+    # Check that gitignore filter is NOT included (no .gitignore file)
+    assert "--filter=:- .gitignore" not in cmd_list
+
+
+def test_rsync_gitignore_with_progress_mode(tmp_path):
+    """Test rsync command includes gitignore filter in progress mode."""
+    # Create a temporary .gitignore file
+    gitignore_file = tmp_path / ".gitignore"
+    gitignore_file.write_text("*.log\n")
+
+    syncer = RsyncSyncer(
+        local_dir=str(tmp_path),
+        remote_dir="/remote/project",
+        host="192.168.1.1",
+        user="dev",
+        key_filename="~/.ssh/id_rsa",
+        respect_gitignore=True,
+    )
+
+    cmd_list = syncer._build_rsync_command(show_progress=True)
+
+    # Check that gitignore filter is included in progress mode
+    assert "--filter=:- .gitignore" in cmd_list
+    # Check progress mode flags
+    assert "-av" in cmd_list or any(x.startswith("-") and "a" in x and "v" in x for x in cmd_list)
+    assert "--info=NAME" in cmd_list
