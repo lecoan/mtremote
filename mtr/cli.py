@@ -138,6 +138,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
 
     server_conf = config.server_config
     host = server_conf.get("host")
+    port = server_conf.get("port", 22)
     user = server_conf.get("user")
     key_filename = server_conf.get("key_filename")
     password = server_conf.get("password")
@@ -185,6 +186,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
                 user=user,
                 key_filename=key_filename,
                 password=password,
+                port=port,
                 exclude=exclude,
             )
         elif engine == "sftp":
@@ -195,6 +197,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
                 user=user,
                 key_filename=key_filename,
                 password=password,
+                port=port,
                 exclude=exclude,
             )
         else:
@@ -230,7 +233,7 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, comma
         click.echo(f"[DryRun] Would run on {host}: {remote_cmd} (workdir={remote_dir})")
         return
 
-    ssh = SSHClientWrapper(host, user, key_filename=key_filename, password=password)
+    ssh = SSHClientWrapper(host, user, port=port, key_filename=key_filename, password=password)
     try:
         ssh.connect()
         logger.info(f"SSH connection established to {host}", module="mtr.ssh")

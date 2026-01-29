@@ -13,3 +13,7 @@ wheels/
 node_modules/
 
 .mtr
+
+# Debug logs
+debug.log
+*.log
