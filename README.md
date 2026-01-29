@@ -1,4 +1,4 @@
-# MTRemote (mtr)
+# MTRemote (mtr-cli)
 
 MTRemote 是一个专为 AI Infra 和 Python/C++ 混合开发设计的命令行工具。它允许你在本地修改代码，通过简单的 `mtr` 前缀，自动将代码同步到远端 GPU 服务器并执行命令，同时保留本地的交互体验（实时日志、颜色高亮、Ctrl+C 支持）。
 
@@ -21,9 +21,9 @@ MTRemote 是一个专为 AI Infra 和 Python/C++ 混合开发设计的命令行�
 推荐使用 `uv` 或 `pipx` 安装：
 
 ```bash
-uv tool install mtremote
+uv tool install mtr-cli
 # 或者
-pip install mtremote
+pip install mtr-cli
 ```
 
 ### 系统依赖
@@ -165,7 +165,7 @@ sudo yum install sshpass
 使用 `--get` 参数可以从远端服务器下载文件或文件夹到本地：
 
 ```bash
-# 下载文件到当前目录
+# 下载文件到默认下载位置
 mtr --get /remote/path/to/file.txt
 
 # 下载文件到指定位置

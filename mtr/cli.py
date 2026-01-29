@@ -73,7 +73,7 @@ def _init_config():
 @click.option("--init", is_flag=True, help="Initialize a configuration file in current directory")
 @click.option("--enable-log", is_flag=True, help="Enable logging to file")
 @click.option("--log-level", default="INFO", help="Log level (DEBUG/INFO/WARNING/ERROR)")
-@click.option("--log-file", help="Path to log file (default: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)")
+@click.option("--log-file", help="Path to log file (default: ./.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)")
 @click.option("--get", "remote_get_path", help="Remote path to download from")
 @click.option("--to", "local_dest_path", help="Local destination path for download (optional)")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
@@ -86,9 +86,9 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
     # Setup logging if enabled
     if enable_log:
         if not log_file:
-            # Generate default log file path: ~/.mtr/logs/mtr_YYYYMMDD_HHMMSS.log
+            # Generate default log file path: ./.mtr/logs/mtr_YYYYMMDD_HHMMSS.log
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_dir = os.path.expanduser("~/.mtr/logs")
+            log_dir = os.path.join(os.getcwd(), ".mtr/logs")
             log_file = os.path.join(log_dir, f"mtr_{timestamp}.log")
 
         try:
@@ -238,6 +238,13 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
 
     # 3. Download from remote (if --get is specified)
     if remote_get_path:
+        # Resolve relative remote path from remote_dir
+        if not remote_get_path.startswith("/"):
+            if not remote_dir:
+                click.secho("Error: 'remote_dir' is required for relative --get path.", fg="red", err=True)
+                sys.exit(1)
+            remote_get_path = os.path.join(remote_dir, remote_get_path)
+
         # Resolve local destination path
         if cli_dest:
             local_dest = cli_dest
