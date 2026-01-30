@@ -4,10 +4,12 @@ from datetime import datetime
 
 import click
 
+from mtr import __version__
 from mtr.config import ConfigError, ConfigLoader
 from mtr.logger import LogLevel, get_logger, setup_logging
 from mtr.ssh import SSHClientWrapper, SSHError
 from mtr.sync import RsyncSyncer, SftpSyncer, SyncError
+from mtr.updater import UpdateChecker
 
 DEFAULT_CONFIG_TEMPLATE = """# MTRemote Configuration
 defaults:
@@ -71,6 +73,7 @@ def _init_config():
 
 
 @click.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+@click.version_option(version=__version__, prog_name="mtr-cli", help="Show version and exit.")
 @click.option("-s", "--server", help="Target server alias")
 @click.option("--sync/--no-sync", default=True, help="Enable/Disable code sync")
 @click.option("--dry-run", is_flag=True, help="Print commands without executing")
@@ -81,9 +84,35 @@ def _init_config():
 @click.option("--log-file", help="Path to log file (default: ./.mtr/logs/mtr_YYYYMMDD_HHMMSS.log)")
 @click.option("--get", "remote_get_path", help="Remote path to download from")
 @click.option("--to", "local_dest_path", help="Local destination path for download (optional)")
+@click.option("--no-check-update", is_flag=True, help="Disable update check")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remote_get_path, local_dest_path, command):
+def cli(
+    server,
+    sync,
+    dry_run,
+    tty,
+    init,
+    enable_log,
+    log_level,
+    log_file,
+    remote_get_path,
+    local_dest_path,
+    no_check_update,
+    command,
+):
     """MTRemote: Sync and Execute code on remote server."""
+
+    # Check for updates (async, non-blocking)
+    update_message = None
+    if not no_check_update and not init:
+        checker = UpdateChecker()
+        # Try to get cached update message first (from previous check)
+        update_message = checker.get_cached_update_message()
+        # Trigger background check for next time
+        try:
+            checker.check()
+        except Exception:
+            pass  # Silently fail update check
 
     # Get logger instance (will be no-op if not setup)
     logger = get_logger()
@@ -379,6 +408,9 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
             logger.info(f"Executing interactive command: {remote_cmd}", module="mtr.cli")
             exit_code = ssh.run_interactive_shell(remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd)
             logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
+            # Show update message if available
+            if update_message:
+                click.echo(update_message, err=True)
             sys.exit(exit_code)
         else:
             # Run stream mode (for scripts/pipes)
@@ -397,11 +429,17 @@ def cli(server, sync, dry_run, tty, init, enable_log, log_level, log_file, remot
                 exit_code = e.value
 
             logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
+            # Show update message if available
+            if update_message:
+                click.echo(update_message, err=True)
             sys.exit(exit_code)
 
     except SSHError as e:
         logger.error(f"SSH error: {e}", module="mtr.ssh")
         click.secho(f"SSH Error: {e}", fg="red", err=True)
+        # Show update message if available even on error
+        if update_message:
+            click.echo(update_message, err=True)
         sys.exit(1)
     finally:
         logger.info("Closing SSH connection", module="mtr.ssh")
