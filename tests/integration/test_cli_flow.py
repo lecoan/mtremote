@@ -1,5 +1,5 @@
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -10,13 +10,12 @@ from mtr.cli import cli
 @pytest.fixture
 def mock_components(mocker):
     config_mock = mocker.patch("mtr.cli.ConfigLoader")
-    ssh_mock = mocker.patch("mtr.cli.SSHClientWrapper")
     sync_mock = mocker.patch("mtr.cli.RsyncSyncer")
-    return config_mock, ssh_mock, sync_mock
+    return config_mock, sync_mock
 
 
 def test_mtr_flow(mock_components):
-    config_cls, ssh_cls, sync_cls = mock_components
+    config_cls, sync_cls = mock_components
 
     # Setup Config Mock
     mock_config_instance = MagicMock()
@@ -31,35 +30,31 @@ def test_mtr_flow(mock_components):
     mock_config_instance.global_defaults = {"exclude": []}
     config_cls.return_value.load.return_value = mock_config_instance
 
-    # Setup SSH Mock with generator return value
-    ssh_instance = ssh_cls.return_value
-
-    def mock_stream(*args, **kwargs):
-        yield "output line 1"
-        return 0
-
-    ssh_instance.exec_command_stream.side_effect = mock_stream
-
     # Setup Sync Mock
     sync_instance = sync_cls.return_value
 
-    runner = CliRunner()
-    # Invoke with arguments. Note: command is passed as args
-    result = runner.invoke(cli, ["python", "train.py"])
+    # Mock SSH command execution
+    with patch("mtr.cli.run_ssh_command") as mock_ssh:
+        mock_ssh.return_value = 0
 
-    assert result.exit_code == 0
+        runner = CliRunner()
+        # Invoke with arguments. Note: command is passed as args
+        result = runner.invoke(cli, ["python", "train.py"])
 
-    # Verify Call Order
-    config_cls.return_value.load.assert_called()
-    sync_cls.assert_called()
-    sync_instance.sync.assert_called()
-    ssh_cls.assert_called()
-    ssh_instance.connect.assert_called()
-    ssh_instance.exec_command_stream.assert_called()
+        assert result.exit_code == 0
 
-    args, kwargs = ssh_instance.exec_command_stream.call_args
-    assert "python train.py" in args[0]
-    assert kwargs["workdir"] == "/remote"
+        # Verify Call Order
+        config_cls.return_value.load.assert_called()
+        sync_cls.assert_called()
+        sync_instance.sync.assert_called()
+        mock_ssh.assert_called_once()
+
+        # Verify SSH command was called with correct arguments
+        call_kwargs = mock_ssh.call_args.kwargs
+        assert call_kwargs["host"] == "1.2.3.4"
+        assert call_kwargs["user"] == "testuser"
+        assert call_kwargs["command"] == "python train.py"
+        assert call_kwargs["workdir"] == "/remote"
 
 
 def test_mtr_init(tmp_path):

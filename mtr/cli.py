@@ -7,19 +7,17 @@ import click
 from mtr import __version__
 from mtr.config import ConfigError, ConfigLoader
 from mtr.logger import LogLevel, get_logger, setup_logging
-from mtr.ssh import SSHClientWrapper, SSHError
-from mtr.sync import RsyncSyncer, SftpSyncer, SyncError
+from mtr.ssh import SSHError, run_ssh_command
+from mtr.sync import RsyncSyncer, SyncError
 from mtr.updater import UpdateChecker
 
 DEFAULT_CONFIG_TEMPLATE = """# MTRemote Configuration
 defaults:
-  # 默认同步引擎
-  # 选项: "rsync" (推荐), "sftp"
+  # 默认同步引擎 (仅支持 rsync)
   sync: "rsync"
 
-  # 是否尊重 .gitignore 文件（仅 rsync 模式支持）
+  # 是否尊重 .gitignore 文件
   # 设置为 true 时，rsync 会自动读取项目根目录的 .gitignore 并排除匹配的文件
-  # SFTP 模式不支持此选项，如启用会报错
   respect_gitignore: true
 
   exclude:
@@ -41,11 +39,8 @@ servers:
     # 预设命令 (可选)
     # pre_cmd: "source ~/.bashrc && conda activate myenv"
 
-    # 密码认证 (可选)
+    # 密码认证 (可选，需要安装 sshpass)
     # password: "secret"
-
-    # 强制同步引擎 (可选)
-    # sync: "sftp"
 
     # 该服务器的下载位置（可选，覆盖 defaults）
     # download_dir: "./backups/dev-node"
@@ -226,71 +221,61 @@ def cli(
         # Determine engine
         engine = server_conf.get("sync", config.global_defaults.get("sync", "rsync"))
 
-        if engine == "rsync":
-            syncer = RsyncSyncer(
-                local_dir=local_dir,
-                remote_dir=remote_dir,
-                host=host,
-                user=user,
-                key_filename=key_filename,
-                password=password,
-                port=port,
-                exclude=exclude,
-                respect_gitignore=respect_gitignore,
-            )
-        elif engine == "sftp":
-            syncer = SftpSyncer(
-                local_dir=local_dir,
-                remote_dir=remote_dir,
-                host=host,
-                user=user,
-                key_filename=key_filename,
-                password=password,
-                port=port,
-                exclude=exclude,
-                respect_gitignore=respect_gitignore,
-            )
-        else:
+        # Check if SFTP is configured
+        if engine == "sftp":
+            logger.error("SFTP mode is no longer supported. Please use rsync.", module="mtr.cli")
             click.secho(
-                f"Warning: Sync engine '{engine}' not supported yet. Fallback/Skipping.",
-                fg="yellow",
+                "Error: SFTP mode has been removed. Please update your config to use 'sync: rsync'.",
+                fg="red",
+                err=True,
             )
-            syncer = None
+            sys.exit(1)
 
-        if syncer:
-            try:
-                if dry_run:
-                    click.echo(f"[DryRun] Would sync {local_dir} -> {remote_dir}")
-                    logger.info(f"[DryRun] Would sync {local_dir} -> {remote_dir}", module="mtr.sync")
-                else:
-                    if is_interactive and console:
-                        # TTY mode: single line real-time update using Rich Live
-                        from rich.live import Live
-                        from rich.text import Text
+        syncer = RsyncSyncer(
+            local_dir=local_dir,
+            remote_dir=remote_dir,
+            host=host,
+            user=user,
+            key_filename=key_filename,
+            password=password,
+            port=port,
+            exclude=exclude,
+            respect_gitignore=respect_gitignore,
+        )
 
-                        with Live(Text("Starting sync...", style="blue"), refresh_per_second=10) as live:
+        try:
+            if dry_run:
+                click.echo(f"[DryRun] Would sync {local_dir} -> {remote_dir}")
+                logger.info(f"[DryRun] Would sync {local_dir} -> {remote_dir}", module="mtr.sync")
+            else:
+                if is_interactive and console:
+                    # TTY mode: single line real-time update using Rich Live
+                    from rich.live import Live
+                    from rich.text import Text
 
-                            def show_sync_progress(filename):
-                                # Get relative path for cleaner display
-                                rel_path = os.path.relpath(filename, local_dir)
-                                live.update(Text(f"Syncing: {rel_path}", style="blue"))
+                    with Live(Text("Starting sync...", style="blue"), refresh_per_second=10) as live:
 
-                            syncer.sync(show_progress=True, progress_callback=show_sync_progress)
-                            live.update(Text("Sync completed!", style="green"))
-                    else:
-                        # no_tty mode: print each file on new line
                         def show_sync_progress(filename):
+                            # Get relative path for cleaner display
                             rel_path = os.path.relpath(filename, local_dir)
-                            click.echo(f"Syncing: {rel_path}")
+                            live.update(Text(f"Syncing: {rel_path}", style="blue"))
 
-                        click.secho("Syncing code...", fg="blue")
                         syncer.sync(show_progress=True, progress_callback=show_sync_progress)
-                        click.secho("Sync completed!", fg="green")
-                    logger.info(f"Sync completed: {local_dir} -> {remote_dir}", module="mtr.sync")
-            except SyncError as e:
-                logger.error(f"Sync failed: {e}", module="mtr.sync")
-                click.secho(f"Sync Failed: {e}", fg="red", err=True)
-                sys.exit(1)
+                        live.update(Text("Sync completed!", style="green"))
+                else:
+                    # no_tty mode: print each file on new line
+                    def show_sync_progress(filename):
+                        rel_path = os.path.relpath(filename, local_dir)
+                        click.echo(f"Syncing: {rel_path}")
+
+                    click.secho("Syncing code...", fg="blue")
+                    syncer.sync(show_progress=True, progress_callback=show_sync_progress)
+                    click.secho("Sync completed!", fg="green")
+                logger.info(f"Sync completed: {local_dir} -> {remote_dir}", module="mtr.sync")
+        except SyncError as e:
+            logger.error(f"Sync failed: {e}", module="mtr.sync")
+            click.secho(f"Sync Failed: {e}", fg="red", err=True)
+            sys.exit(1)
 
     # 3. Download from remote (if --get is specified)
     if remote_get_path:
@@ -322,36 +307,27 @@ def cli(
         # Determine engine
         engine = server_conf.get("sync", config.global_defaults.get("sync", "rsync"))
 
-        if engine == "rsync":
-            syncer = RsyncSyncer(
-                local_dir=".",  # Not used for download
-                remote_dir=".",  # Not used for download
-                host=host,
-                user=user,
-                key_filename=key_filename,
-                password=password,
-                port=port,
-                exclude=exclude,
-                respect_gitignore=respect_gitignore,
-            )
-        elif engine == "sftp":
-            syncer = SftpSyncer(
-                local_dir=".",  # Not used for download
-                remote_dir=".",  # Not used for download
-                host=host,
-                user=user,
-                key_filename=key_filename,
-                password=password,
-                port=port,
-                exclude=exclude,
-                respect_gitignore=respect_gitignore,
-            )
-        else:
+        # Check if SFTP is configured
+        if engine == "sftp":
+            logger.error("SFTP mode is no longer supported. Please use rsync.", module="mtr.cli")
             click.secho(
-                f"Warning: Sync engine '{engine}' not supported yet.",
-                fg="yellow",
+                "Error: SFTP mode has been removed. Please update your config to use 'sync: rsync'.",
+                fg="red",
+                err=True,
             )
             sys.exit(1)
+
+        syncer = RsyncSyncer(
+            local_dir=".",  # Not used for download
+            remote_dir=".",  # Not used for download
+            host=host,
+            user=user,
+            key_filename=key_filename,
+            password=password,
+            port=port,
+            exclude=exclude,
+            respect_gitignore=respect_gitignore,
+        )
 
         try:
             if dry_run:
@@ -398,41 +374,26 @@ def cli(
         click.echo(f"[DryRun] Would run on {host}: {remote_cmd} (workdir={remote_dir})")
         return
 
-    ssh = SSHClientWrapper(host, user, port=port, key_filename=key_filename, password=password)
     try:
-        ssh.connect()
-        logger.info(f"SSH connection established to {host}", module="mtr.ssh")
+        # Execute command via SSH
+        logger.info(f"Executing command: {remote_cmd}", module="mtr.cli")
+        exit_code = run_ssh_command(
+            host=host,
+            user=user,
+            command=remote_cmd,
+            port=port,
+            key_filename=key_filename,
+            password=password,
+            workdir=remote_dir,
+            pre_cmd=pre_cmd,
+            tty=is_interactive,
+        )
+        logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
 
-        if is_interactive:
-            # Run interactive shell (full TTY support)
-            logger.info(f"Executing interactive command: {remote_cmd}", module="mtr.cli")
-            exit_code = ssh.run_interactive_shell(remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd)
-            logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
-            # Show update message if available
-            if update_message:
-                click.echo(update_message, err=True)
-            sys.exit(exit_code)
-        else:
-            # Run stream mode (for scripts/pipes)
-            # pty=False ensures clean output for parsing (separates stdout/stderr if we implemented that,
-            # but currently streams merged or just stdout. Let's keep pty=False to avoid control chars)
-            logger.info(f"Executing command: {remote_cmd}", module="mtr.cli")
-            stream = ssh.exec_command_stream(remote_cmd, workdir=remote_dir, pre_cmd=pre_cmd, pty=False)
-
-            # Consume generator and print
-            exit_code = 0
-            try:
-                while True:
-                    line = next(stream)
-                    click.echo(line, nl=False)
-            except StopIteration as e:
-                exit_code = e.value
-
-            logger.info(f"Command completed with exit code: {exit_code}", module="mtr.cli")
-            # Show update message if available
-            if update_message:
-                click.echo(update_message, err=True)
-            sys.exit(exit_code)
+        # Show update message if available
+        if update_message:
+            click.echo(update_message, err=True)
+        sys.exit(exit_code)
 
     except SSHError as e:
         logger.error(f"SSH error: {e}", module="mtr.ssh")
@@ -441,9 +402,6 @@ def cli(
         if update_message:
             click.echo(update_message, err=True)
         sys.exit(1)
-    finally:
-        logger.info("Closing SSH connection", module="mtr.ssh")
-        ssh.close()
 
 
 if __name__ == "__main__":
